@@ -5,5 +5,7 @@ proxmox_clone_full: true
 vm_start: true
 vm_stop_timeout: 180
 template_name: ""
+guest_cores: ""
+guest_memory_mb: ""
 # spin_guest runs on the destination host. A tier play sets this per guest.
 proxmox_target_node: "{{ inventory_hostname }}"

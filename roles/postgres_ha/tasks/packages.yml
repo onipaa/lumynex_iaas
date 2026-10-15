@@ -11,6 +11,14 @@
   changed_when: false
   no_log: true
 
+- name: Create the sysmaint account
+  ansible.builtin.user:
+    name: sysmaint
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
 - name: Set the sysmaint password
   ansible.builtin.shell:
     cmd: chpasswd

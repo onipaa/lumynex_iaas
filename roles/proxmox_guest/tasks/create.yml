@@ -76,6 +76,15 @@
       delegate_to: "{{ proxmox_target_node }}"
       changed_when: true
 
+    - name: Set CPU and memory
+      ansible.builtin.command:
+        cmd: "qm set {{ next_vmid.stdout }} --sockets 1 --cores {{ guest_cores }} --memory {{ guest_memory_mb }}"
+      delegate_to: "{{ proxmox_target_node }}"
+      when:
+        - (guest_cores | default('') | string | length) > 0
+        - (guest_memory_mb | default('') | string | length) > 0
+      changed_when: true
+
     - name: Start the guest
       ansible.builtin.command:
         cmd: "qm start {{ next_vmid.stdout }}"

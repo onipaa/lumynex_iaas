@@ -38,6 +38,8 @@
         vm_name: "{{ item.name }}"
         template_name: "{{ item.template }}"
         proxmox_target_node: "{{ item.node }}"
+        guest_cores: "{{ item.cores | default('') }}"
+        guest_memory_mb: "{{ item.memory_mb | default('') }}"
       loop: "{{ tier_members | reverse | list }}"
       loop_control:
         label: "{{ item.name }}"

@@ -30,3 +30,12 @@ prhqv-cl1-openbao-n3
 
 [openbao:vars]
 ansible_user=harperjm
+
+# Guest addresses are discovered into inventory/host_vars/<name>.yml.
+[app]
+prhqv-cl1-app-n1
+prhqv-cl1-app-n2
+prhqv-cl1-app-n3
+
+[app:vars]
+ansible_user=harperjm

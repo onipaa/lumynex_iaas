@@ -25,11 +25,11 @@ Each tier is created, then configured, before the next tier starts. Configure wr
 
 1. OpenBao writes `openbao.env`.
 2. Postgres, Patroni, and etcd read `openbao.env` and write `postgresql.env`.
-3. Django app guests.
+3. Django app guests read `openbao.env` and `postgresql.env`, and write `app.env`.
 4. PgDog in front of Postgres.
 5. Web load balancers in front of the Django guests.
 
-Stages 3–5 are not playbooks yet.
+Stages 4 and 5 are not playbooks yet. Stage 3 creates the guests and their accounts. It does not install Django.
 
 ```bash
 ansible-playbook playbooks/spin_tier.yml -e tier=openbao
@@ -40,7 +40,7 @@ ansible-playbook playbooks/configure_openbao.yml
 
 Build and remove one feature without touching the others. The loop creates the guests and destroys them. It does not install the product.
 
-OpenBao and Postgres have `node` and `template` filled in. Other tiers fail the placement check until those fields are added. Guests are created n1 first, one at a time, so `pvesh get /cluster/nextid` is not shared. Teardown walks that tier from the top of `guests.yml`.
+OpenBao, Postgres, and the app guests have `node` and `template` filled in. Other tiers fail the placement check until those fields are added. Guests are created n1 first, one at a time, so `pvesh get /cluster/nextid` is not shared. Teardown walks that tier from the top of `guests.yml`.
 
 ```bash
 ansible-playbook playbooks/spin_tier.yml -e tier=openbao
@@ -68,6 +68,19 @@ ansible-playbook playbooks/configure_postgres.yml
 ansible-playbook playbooks/teardown_tier.yml -e tier=postgres -e teardown_confirm=true
 ```
 
+## Django guests
+
+`spin_tier` creates the three guests at the old size: 1 socket, 6 cores, 12288 MB. Odd guests come from `vanilla-26a` on proxmox-1. The even guest comes from `vanilla-26b` on proxmox-2. `configure_app.yml` requires `openbao.env` and a configured Postgres leader. It stores each `sysmaint` password and the app cluster secret in OpenBao, then writes `app.env`. A second run does not rotate those secrets. The database role `lumynex_app` is not created here.
+
+```bash
+ansible-playbook playbooks/spin_tier.yml -e tier=app
+ansible-playbook playbooks/configure_app.yml
+```
+
+```bash
+ansible-playbook playbooks/teardown_tier.yml -e tier=app -e teardown_confirm=true
+```
+
 ## Spin one guest
 
 `present` clones from a template when the name is missing and leaves an existing guest alone.
@@ -83,4 +96,4 @@ Two playbooks at once can still race on `pvesh get /cluster/nextid`.
 
 ## What is not here
 
-PgDog, the Django app, the web load balancers, and PMM are not playbooks yet. OpenBao listens with TLS off, which is how the old cluster was formed. The root token and unseal keys are written only under `~/.config/lumynex/`. Secrets from `ansible/vault/secrets.yml` were not copied.
+PgDog, the Django application, the web load balancers, and PMM are not playbooks yet. OpenBao listens with TLS off, which is how the old cluster was formed. The root token and unseal keys are written only under `~/.config/lumynex/`. Secrets from `ansible/vault/secrets.yml` were not copied.

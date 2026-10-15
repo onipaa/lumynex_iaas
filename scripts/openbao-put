@@ -10,4 +10,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openbao.sh"
 openbao_load
 path="$1"
 shift
-bao kv put "${path}" "$@" >/dev/null
+if ! err="$(bao kv put "${path}" "$@" 2>&1)"; then
+  rc=$?
+  printf '%s\n' "${err}" | sed -E 's/=[^[:space:]]*/=REDACTED/g' >&2
+  exit "${rc}"
+fi

@@ -1,0 +1,72 @@
+---
+# Third step for the app tier. The guests must already exist.
+# Postgres must already be configured, so the leader address is known.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=app
+#   ansible-playbook playbooks/configure_app.yml
+#
+# Requires ~/.config/lumynex/openbao.env.
+# Writes ~/.config/lumynex/app.env.
+# Creates the sysmaint account and applies OS upgrades.
+# Does not install Django, nginx, or gunicorn, and does not create the database role.
+
+- name: Prepare app guests
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    tier: app
+    app_cluster_id: "1"
+    app_openbao_kv_prefix: secret/lumynex/app
+    postgres_openbao_kv_prefix: "{{ app_openbao_kv_prefix }}"
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: "{{ item.name }} needs node and template in guests.yml."
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/app_secrets.yml
+
+    - name: Open SSH to one guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+        guest_group: app
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write the app environment file
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/write-app-env"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+- name: Prepare the app guest operating system
+  hosts: app
+  become: true
+  gather_facts: true
+  serial: 1
+  order: sorted
+  vars:
+    app_openbao_kv_prefix: secret/lumynex/app
+  tasks:
+    - name: Create the sysmaint account and upgrade the OS
+      ansible.builtin.include_role:
+        name: app_host

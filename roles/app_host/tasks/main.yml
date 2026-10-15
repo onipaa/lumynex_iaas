@@ -1,0 +1,37 @@
+---
+- name: Read the sysmaint password
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-get"
+      - "{{ app_openbao_kv_prefix }}/{{ inventory_hostname }}"
+      - sysmaint_password
+  register: openbao_sysmaint_password
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  no_log: true
+
+- name: Create the sysmaint account
+  ansible.builtin.user:
+    name: sysmaint
+    shell: /bin/bash
+    create_home: true
+    groups: sudo
+    append: true
+
+- name: Set the sysmaint password
+  ansible.builtin.shell:
+    cmd: chpasswd
+    stdin: "sysmaint:{{ openbao_sysmaint_password.stdout }}"
+  no_log: true
+
+- name: Apt update
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+
+- name: Apply OS upgrades
+  ansible.builtin.apt:
+    upgrade: dist
+    autoremove: true
+    autoclean: true

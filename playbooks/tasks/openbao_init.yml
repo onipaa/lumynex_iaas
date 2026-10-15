@@ -124,6 +124,25 @@
   delay: 2
   changed_when: false
 
+- name: Enable the kv-v2 secrets engine
+  ansible.builtin.command:
+    cmd: bao secrets enable -path=secret kv-v2
+  environment:
+    BAO_ADDR: "{{ openbao_leader_addr }}"
+    BAO_TOKEN: >-
+      {{
+        lookup('file', lookup('env', 'HOME') + '/.config/lumynex/openbao.env').splitlines()
+        | select('match', '^BAO_TOKEN=')
+        | map('regex_replace', '^BAO_TOKEN=', '')
+        | first
+      }}
+  delegate_to: localhost
+  become: false
+  register: kv_enable
+  changed_when: kv_enable.rc == 0
+  failed_when: kv_enable.rc != 0 and 'path is already in use' not in (kv_enable.stderr | default(''))
+  no_log: true
+
 - name: Report the login file
   ansible.builtin.debug:
     msg:
