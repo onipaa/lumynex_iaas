@@ -1,0 +1,43 @@
+---
+# Clone every guest in one tier, n1 first, one guest at a time.
+# Does not install the product. An existing name is left alone.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=openbao
+#   ansible-playbook playbooks/spin_tier.yml -e tier=openbao -e member=prhqv-cl1-openbao-n1
+
+- name: Spin one Lumynex tier
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: >-
+          {{ item.name }} needs node and template in
+          inventory/group_vars/guests.yml before this tier can be built.
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create one declared guest
+      ansible.builtin.include_role:
+        name: proxmox_guest
+      vars:
+        proxmox_guest_state: present
+        vm_name: "{{ item.name }}"
+        template_name: "{{ item.template }}"
+        proxmox_target_node: "{{ item.node }}"
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"

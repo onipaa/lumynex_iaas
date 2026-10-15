@@ -1,0 +1,73 @@
+---
+- name: List cluster VMs
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type vm --output-format json
+  register: cluster_vms
+  changed_when: false
+
+- name: Match guest by name
+  ansible.builtin.set_fact:
+    matched_by_name: >-
+      {{
+        (cluster_vms.stdout | from_json)
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', vm_name)
+        | list
+      }}
+
+- name: Refuse an ambiguous name
+  ansible.builtin.assert:
+    that:
+      - matched_by_name | length < 2
+    fail_msg: "{{ vm_name }} matched {{ matched_by_name | length }} objects."
+
+- name: Refuse to destroy a template
+  ansible.builtin.assert:
+    that:
+      - (matched_by_name[0].template | default(0) | int) != 1
+    fail_msg: "{{ vm_name }} is a template. Refusing to destroy it."
+  when: matched_by_name | length == 1
+
+- name: Record that the guest is already absent
+  ansible.builtin.debug:
+    msg: "{{ vm_name }} is already absent"
+  when: matched_by_name | length == 0
+
+- name: Stop and destroy the guest
+  when: matched_by_name | length == 1
+  block:
+    - name: Record the guest location
+      ansible.builtin.set_fact:
+        target_vmid: "{{ matched_by_name[0].vmid }}"
+        target_node: "{{ matched_by_name[0].node }}"
+
+    - name: Read live status on the owning node
+      ansible.builtin.command:
+        cmd: "qm status {{ target_vmid }}"
+      delegate_to: "{{ target_node | default(inventory_hostname) }}"
+      register: qm_status
+      changed_when: false
+
+    - name: Stop the guest if it is running
+      ansible.builtin.command:
+        cmd: "qm stop {{ target_vmid }} --timeout {{ vm_stop_timeout }}"
+      delegate_to: "{{ target_node | default(inventory_hostname) }}"
+      when: "'running' in qm_status.stdout"
+      changed_when: true
+
+    - name: Destroy the guest and purge its disks
+      ansible.builtin.command:
+        cmd: >-
+          qm destroy {{ target_vmid }}
+          --purge 1
+          --destroy-unreferenced-disks 1
+      delegate_to: "{{ target_node | default(inventory_hostname) }}"
+      changed_when: true
+
+    - name: Report the destroyed guest
+      ansible.builtin.debug:
+        msg:
+          vm_name: "{{ vm_name }}"
+          vmid: "{{ target_vmid }}"
+          proxmox_node: "{{ target_node }}"
+          destroyed: true

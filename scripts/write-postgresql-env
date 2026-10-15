@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Write ~/.config/lumynex/postgresql.env from OpenBao and discovered host_vars.
+# Secret values are not stored in this file.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${ROOT}/lib/openbao.sh"
+openbao_load
+
+prefix="secret/lumynex/postgresql"
+host_vars="${ROOT}/../inventory/host_vars"
+dest="${HOME}/.config/lumynex/postgresql.env"
+names=(
+  prhqv-cl1-postgresql-n1
+  prhqv-cl1-postgresql-n2
+  prhqv-cl1-postgresql-n3
+  prhqv-cl1-postgresql-n4
+  prhqv-cl1-postgresql-n5
+)
+
+ip_of() {
+  local file="${host_vars}/$1.yml"
+  if [[ ! -f "${file}" ]]; then
+    echo "missing ${file}" >&2
+    return 1
+  fi
+  awk '/^ansible_host:/{print $2; exit}' "${file}"
+}
+
+pgpass="$(bao kv get -field=postgres_password "${prefix}/cl1/cluster")"
+reppass="$(bao kv get -field=replicator_password "${prefix}/cl1/cluster")"
+pghost="$(ip_of "${names[0]}")"
+
+mkdir -p "$(dirname "${dest}")"
+tmp="$(mktemp "${dest}.XXXXXX")"
+{
+  printf 'PGHOST=%q\n' "${pghost}"
+  printf 'PGPORT=%s\n' 5432
+  printf 'PGUSER=%s\n' postgres
+  printf 'PGPASSWORD=%q\n' "${pgpass}"
+  printf 'PGDATABASE=%s\n' postgres
+  printf 'REPLICATOR_USER=%s\n' replicator
+  printf 'REPLICATOR_PASSWORD=%q\n' "${reppass}"
+  for name in "${names[@]}"; do
+    key="SYSMAINT_$(printf '%s' "${name}" | tr '-' '_')"
+    value="$(bao kv get -field=sysmaint_password "${prefix}/${name}")"
+    printf '%s=%q\n' "${key}" "${value}"
+    printf '%s_HOST=%q\n' "${key}" "$(ip_of "${name}")"
+  done
+} >"${tmp}"
+chmod 600 "${tmp}"
+mv "${tmp}" "${dest}"

@@ -1,0 +1,11 @@
+# {{ ansible_managed }}
+name: "{{ inventory_hostname }}"
+data-dir: {{ postgres_etcd_data_dir }}
+listen-peer-urls: "http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}"
+listen-client-urls: "http://{{ ansible_host }}:{{ postgres_etcd_client_port }},http://127.0.0.1:{{ postgres_etcd_client_port }}"
+initial-advertise-peer-urls: "http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}"
+advertise-client-urls: "http://{{ ansible_host }}:{{ postgres_etcd_client_port }}"
+initial-cluster: "{% for host in groups['postgres'] | sort %}{{ host }}=http://{{ hostvars[host].ansible_host }}:{{ postgres_etcd_peer_port }}{% if not loop.last %},{% endif %}{% endfor %}"
+initial-cluster-state: {{ postgres_etcd_initial_cluster_state }}
+initial-cluster-token: "{{ postgres_etcd_token }}"
+enable-v2: false

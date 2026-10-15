@@ -1,0 +1,84 @@
+---
+- name: Require a template name and a destination node
+  ansible.builtin.assert:
+    that:
+      - (template_name | string | length) > 0
+      - proxmox_target_node in groups['proxmox']
+    fail_msg: >-
+      Pass template_name, and set proxmox_target_node to a host in [proxmox]
+      ({{ groups['proxmox'] | join(', ') }}).
+
+- name: List cluster VMs
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/resources --type vm --output-format json
+  register: cluster_vms
+  changed_when: false
+
+- name: Match an existing guest and the template
+  ansible.builtin.set_fact:
+    matched_by_name: >-
+      {{
+        (cluster_vms.stdout | from_json)
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', vm_name)
+        | list
+      }}
+    matched_templates: >-
+      {{
+        (cluster_vms.stdout | from_json)
+        | selectattr('name', 'defined')
+        | selectattr('name', 'equalto', template_name)
+        | selectattr('template', 'defined')
+        | selectattr('template', 'equalto', 1)
+        | list
+      }}
+
+- name: Refuse a second guest with this name
+  ansible.builtin.assert:
+    that:
+      - matched_by_name | length < 2
+    fail_msg: "{{ vm_name }} is ambiguous ({{ matched_by_name | length }} matches)."
+
+- name: Leave an existing guest alone
+  ansible.builtin.debug:
+    msg: "{{ vm_name }} already exists as vmid {{ matched_by_name[0].vmid }}"
+  when: matched_by_name | length == 1
+
+- name: Clone the template
+  when: matched_by_name | length == 0
+  block:
+    - name: Require exactly one template
+      ansible.builtin.assert:
+        that:
+          - matched_templates | length == 1
+        fail_msg: "Expected one template named {{ template_name }}, found {{ matched_templates | length }}."
+
+    - name: Allocate the next VMID
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/nextid
+      register: next_vmid
+      changed_when: false
+
+    - name: Clone onto this node
+      ansible.builtin.command:
+        cmd: >-
+          qm clone {{ matched_templates[0].vmid }} {{ next_vmid.stdout }}
+          --name {{ vm_name }}
+          --target {{ proxmox_target_node }}
+          --storage {{ proxmox_storage }}
+          --full {{ 1 if (proxmox_clone_full | bool) else 0 }}
+      delegate_to: "{{ (matched_templates[0].node in groups['proxmox']) | ternary(matched_templates[0].node, inventory_hostname) }}"
+      changed_when: true
+
+    - name: Enable the QEMU guest agent
+      ansible.builtin.command:
+        cmd: "qm set {{ next_vmid.stdout }} --agent enabled=1"
+      delegate_to: "{{ proxmox_target_node }}"
+      changed_when: true
+
+    - name: Start the guest
+      ansible.builtin.command:
+        cmd: "qm start {{ next_vmid.stdout }}"
+      delegate_to: "{{ proxmox_target_node }}"
+      when: vm_start | bool
+      changed_when: true

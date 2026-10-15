@@ -1,0 +1,32 @@
+# Copy to inventory/hosts.ini. ansible_host values are the pre-reinstall lab,
+# taken from old_repos/lumynex ansible/inventory/hosts.ini. They are not guesses.
+#
+# [compute] node_32core_ubuntu is a separate machine, not a Proxmox guest.
+# Teardown does not touch it or the two hypervisor hosts.
+
+[proxmox]
+prhqp-proxmox-1 ansible_host=192.168.4.111
+prhqp-proxmox-2 ansible_host=192.168.4.113
+
+[proxmox:vars]
+ansible_user=root
+
+# Guest addresses are discovered into inventory/host_vars/<name>.yml.
+# That directory is gitignored. configure_postgres.yml fills it.
+[postgres]
+prhqv-cl1-postgresql-n1
+prhqv-cl1-postgresql-n2
+prhqv-cl1-postgresql-n3
+prhqv-cl1-postgresql-n4
+prhqv-cl1-postgresql-n5
+
+[postgres:vars]
+ansible_user=harperjm
+
+[openbao]
+prhqv-cl1-openbao-n1
+prhqv-cl1-openbao-n2
+prhqv-cl1-openbao-n3
+
+[openbao:vars]
+ansible_user=harperjm

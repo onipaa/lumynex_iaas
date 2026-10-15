@@ -1,0 +1,37 @@
+---
+- name: Check the sysmaint password
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-get"
+      - --check
+      - "{{ postgres_openbao_kv_prefix }}/{{ member.name }}"
+      - sysmaint_password
+  delegate_to: localhost
+  become: false
+  register: sysmaint_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Generate a sysmaint password
+  ansible.builtin.command:
+    cmd: "{{ playbook_dir }}/../scripts/new-password"
+  delegate_to: localhost
+  become: false
+  register: generated_sysmaint
+  changed_when: false
+  no_log: true
+  when: sysmaint_check.rc != 0
+
+- name: Store the sysmaint password
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-put"
+      - "{{ postgres_openbao_kv_prefix }}/{{ member.name }}"
+      - "sysmaint_password={{ generated_sysmaint.stdout }}"
+      - username=sysmaint
+      - "host={{ member.name }}"
+  delegate_to: localhost
+  become: false
+  no_log: true
+  when: sysmaint_check.rc != 0

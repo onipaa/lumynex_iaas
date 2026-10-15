@@ -1,0 +1,37 @@
+---
+# Destroy every guest in inventory/group_vars/guests.yml.
+# Does not destroy hosts in [proxmox] or the standalone compute machine.
+#
+#   cp inventory/hosts.ini.example inventory/hosts.ini
+#   ansible-playbook playbooks/teardown_guests.yml -e teardown_confirm=true
+
+- name: Tear down Lumynex guest VMs
+  hosts: "{{ proxmox_node | default(groups['proxmox'] | first) }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Require an explicit confirm
+      ansible.builtin.assert:
+        that:
+          - teardown_confirm | default(false) | bool
+        fail_msg: Re-run with -e teardown_confirm=true.
+
+    - name: Require the guest list
+      ansible.builtin.assert:
+        that:
+          - iaas_members is defined
+          - iaas_members | length > 0
+        fail_msg: inventory/group_vars/guests.yml has no iaas_members.
+
+    - name: Destroy one declared guest
+      ansible.builtin.include_role:
+        name: proxmox_guest
+      vars:
+        proxmox_guest_state: absent
+        vm_name: "{{ item.name }}"
+      loop: "{{ iaas_members }}"
+      loop_control:
+        label: "{{ item.name }}"

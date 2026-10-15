@@ -1,0 +1,33 @@
+---
+# Percona PostgreSQL 18 + Patroni + co-located etcd.
+# Taken from the old group_vars/postgres.yml. CPU and RAM stay at the
+# template size; the old 10 vCPU / 24 GB target was never applied at clone time.
+
+postgres_ppg_major: "18"
+postgres_ppg_repo: "ppg-{{ postgres_ppg_major }}"
+postgres_ppg_package: "percona-postgresql-{{ postgres_ppg_major }}"
+postgres_percona_release_url: "https://repo.percona.com/apt/percona-release_latest.{{ ansible_distribution_release }}_all.deb"
+postgres_ha_packages:
+  - "{{ postgres_ppg_package }}"
+  - percona-patroni
+  - etcd
+  - etcd-server
+  - etcd-client
+  - python3-pip
+  - python3-dev
+  - binutils
+
+postgres_data_dir: "/var/lib/postgresql/{{ postgres_ppg_major }}/main"
+postgres_bin_dir: "/usr/lib/postgresql/{{ postgres_ppg_major }}/bin"
+postgres_openbao_kv_prefix: "secret/lumynex/postgresql"
+postgres_cluster_id: "1"
+postgres_patroni_scope: "lumynex-cl{{ postgres_cluster_id }}"
+postgres_patroni_namespace: "lumynex"
+postgres_etcd_token: "lumynex-cl{{ postgres_cluster_id }}-etcd"
+postgres_patroni_rest_port: 8008
+postgres_etcd_client_port: 2379
+postgres_etcd_peer_port: 2380
+postgres_patroni_service: patroni
+postgres_etcd_data_dir: /var/lib/etcd/postgresql
+postgres_etcd_initial_cluster_state: new
+lab_network: 192.168.4.0/22

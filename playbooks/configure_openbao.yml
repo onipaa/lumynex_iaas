@@ -1,0 +1,48 @@
+---
+# Install OpenBao on the three guests and record the login file.
+# The guests must already exist.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=openbao
+#   ansible-playbook playbooks/configure_openbao.yml
+#
+# Writes ~/.config/lumynex/openbao.env and openbao-init.json.
+# Those files stay outside this repo.
+
+- name: Open SSH to the OpenBao guests
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    tier: openbao
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Open SSH to one guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+        guest_group: openbao
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+- name: Install OpenBao
+  hosts: openbao
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install and configure OpenBao
+      ansible.builtin.include_role:
+        name: openbao
+
+- name: Initialize OpenBao and record the login file
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Initialize and unseal
+      ansible.builtin.include_tasks: tasks/openbao_init.yml

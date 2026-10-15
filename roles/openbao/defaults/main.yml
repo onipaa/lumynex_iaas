@@ -1,0 +1,23 @@
+---
+openbao_version: "2.6.1"
+openbao_package_arch: linux_amd64
+openbao_package_url: >-
+  https://github.com/openbao/openbao/releases/download/v{{ openbao_version }}/openbao_{{ openbao_version }}_{{ openbao_package_arch }}.deb
+openbao_config_dir: /etc/openbao
+openbao_config_file: /etc/openbao/openbao.hcl
+openbao_data_dir: /opt/openbao/data
+openbao_audit_dir: /opt/openbao/audit
+openbao_user: openbao
+openbao_group: openbao
+openbao_port: 8200
+openbao_cluster_port: 8201
+openbao_ui: true
+openbao_tls_disable: true
+openbao_storage_backend: raft
+openbao_listener_address: "0.0.0.0:{{ openbao_port }}"
+openbao_cluster_address: "0.0.0.0:{{ openbao_cluster_port }}"
+openbao_hold_package: true
+openbao_audit_enabled: true
+openbao_init_dir: "{{ lookup('env', 'HOME') }}/.config/lumynex"
+openbao_env_file: "{{ openbao_init_dir }}/openbao.env"
+openbao_init_json: "{{ openbao_init_dir }}/openbao-init.json"

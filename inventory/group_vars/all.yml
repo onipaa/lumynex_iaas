@@ -1,0 +1,12 @@
+---
+# Non-secret defaults. Secrets do not belong in this file.
+infrastructure_env: development
+network_domain: lumynex.local
+# Guest agent reports prefix 22 on ens18.
+lab_network: 192.168.4.0/22
+
+proxmox_storage: local-lvm
+proxmox_clone_full: true
+proxmox_clone_timeout: 600
+vm_stop_timeout: 180
+vm_start: true

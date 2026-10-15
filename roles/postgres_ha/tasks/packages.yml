@@ -1,0 +1,93 @@
+---
+- name: Read the sysmaint password
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-get"
+      - "{{ postgres_openbao_kv_prefix }}/{{ inventory_hostname }}"
+      - sysmaint_password
+  register: openbao_sysmaint_password
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  no_log: true
+
+- name: Set the sysmaint password
+  ansible.builtin.shell:
+    cmd: chpasswd
+    stdin: "sysmaint:{{ openbao_sysmaint_password.stdout }}"
+  no_log: true
+
+- name: Apt update
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 0
+
+- name: Apply OS upgrades
+  ansible.builtin.apt:
+    upgrade: dist
+    autoremove: true
+    autoclean: true
+
+- name: Download percona-release
+  ansible.builtin.get_url:
+    url: "{{ postgres_percona_release_url }}"
+    dest: "/tmp/percona-release_latest.{{ ansible_distribution_release }}_all.deb"
+    mode: "0644"
+
+- name: Install percona-release
+  ansible.builtin.apt:
+    deb: "/tmp/percona-release_latest.{{ ansible_distribution_release }}_all.deb"
+
+- name: Enable the Percona PostgreSQL repository
+  ansible.builtin.command:
+    cmd: "percona-release setup -y {{ postgres_ppg_repo }} --scheme https"
+  register: percona_setup
+  changed_when: true
+
+- name: Apt update after the Percona repo
+  ansible.builtin.apt:
+    update_cache: true
+
+- name: Verify the Percona package is visible
+  ansible.builtin.command:
+    cmd: "apt-cache show {{ postgres_ppg_package }}"
+  register: percona_pkg_show
+  changed_when: false
+  failed_when: percona_pkg_show.rc != 0
+
+- name: Install Percona PostgreSQL, Patroni, and etcd
+  ansible.builtin.apt:
+    name: "{{ postgres_ha_packages }}"
+    state: present
+
+- name: Stop the standalone database services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+  loop:
+    - postgresql
+    - patroni
+    - etcd
+    - etcd-server
+  failed_when: false
+
+- name: See whether Patroni already owns this node
+  ansible.builtin.stat:
+    path: /etc/patroni/patroni.yml
+  register: patroni_config
+
+- name: Clear the data directory so Patroni can bootstrap
+  ansible.builtin.file:
+    path: "{{ postgres_data_dir }}"
+    state: absent
+  when: not patroni_config.stat.exists
+
+- name: Recreate an empty data directory
+  ansible.builtin.file:
+    path: "{{ postgres_data_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  when: not patroni_config.stat.exists

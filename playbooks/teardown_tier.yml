@@ -1,0 +1,31 @@
+---
+# Destroy every guest in one tier. Other tiers stay. File order is top first.
+#
+#   ansible-playbook playbooks/teardown_tier.yml -e tier=openbao -e teardown_confirm=true
+
+- name: Tear down one Lumynex tier
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Require an explicit confirm
+      ansible.builtin.assert:
+        that:
+          - teardown_confirm | default(false) | bool
+        fail_msg: Re-run with -e teardown_confirm=true.
+
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Destroy one declared guest
+      ansible.builtin.include_role:
+        name: proxmox_guest
+      vars:
+        proxmox_guest_state: absent
+        vm_name: "{{ item.name }}"
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"

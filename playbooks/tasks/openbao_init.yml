@@ -1,0 +1,133 @@
+---
+- name: Order the OpenBao nodes
+  ansible.builtin.set_fact:
+    openbao_nodes: "{{ groups['openbao'] | sort }}"
+    openbao_leader: "{{ (groups['openbao'] | sort)[0] }}"
+
+- name: Require a leader address
+  ansible.builtin.assert:
+    that:
+      - hostvars[openbao_leader].ansible_host is defined
+      - (hostvars[openbao_leader].ansible_host | length) > 0
+    fail_msg: "{{ openbao_leader }} has no ansible_host."
+
+- name: Set the leader API address
+  ansible.builtin.set_fact:
+    openbao_leader_addr: "http://{{ hostvars[openbao_leader].ansible_host }}:8200"
+
+- name: Ensure the local config directory exists
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.config/lumynex"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  become: false
+
+- name: Read leader status
+  ansible.builtin.command:
+    cmd: bao status -format=json
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+  register: leader_status
+  changed_when: false
+  failed_when: false
+  delegate_to: "{{ openbao_leader }}"
+
+- name: Record whether the leader is initialized
+  ansible.builtin.set_fact:
+    leader_initialized: >-
+      {{ (leader_status.stdout | default('{}') | from_json).initialized | default(false) }}
+
+- name: Initialize the leader
+  ansible.builtin.command:
+    cmd: bao operator init -key-shares=5 -key-threshold=3 -format=json
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+  register: openbao_init
+  when: not (leader_initialized | bool)
+  delegate_to: "{{ openbao_leader }}"
+  no_log: true
+
+- name: Record the new init document
+  ansible.builtin.set_fact:
+    openbao_init_document: "{{ openbao_init.stdout }}"
+  when: openbao_init is changed
+  no_log: true
+
+- name: Write the init document
+  ansible.builtin.copy:
+    content: "{{ openbao_init_document }}"
+    dest: "{{ lookup('env', 'HOME') }}/.config/lumynex/openbao-init.json"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: openbao_init is changed
+  no_log: true
+
+- name: Write the OpenBao login file
+  ansible.builtin.copy:
+    content: |
+      BAO_ADDR={{ openbao_leader_addr }}
+      BAO_TOKEN={{ (openbao_init_document | from_json).root_token }}
+    dest: "{{ lookup('env', 'HOME') }}/.config/lumynex/openbao.env"
+    mode: "0600"
+  delegate_to: localhost
+  become: false
+  when: openbao_init is changed
+  no_log: true
+
+- name: Load unseal keys from the init document
+  ansible.builtin.slurp:
+    src: "{{ lookup('env', 'HOME') }}/.config/lumynex/openbao-init.json"
+  delegate_to: localhost
+  become: false
+  register: stored_init
+  no_log: true
+
+- name: Record the unseal keys
+  ansible.builtin.set_fact:
+    openbao_unseal_keys: "{{ (stored_init.content | b64decode | from_json).unseal_keys_b64 }}"
+  no_log: true
+
+- name: Require three unseal keys
+  ansible.builtin.assert:
+    that:
+      - openbao_unseal_keys | length >= 3
+    fail_msg: >-
+      {{ lookup('env', 'HOME') }}/.config/lumynex/openbao-init.json
+      does not contain three unseal keys.
+
+- name: Unseal each node
+  ansible.builtin.command:
+    cmd: "bao operator unseal {{ item.1 }}"
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+  delegate_to: "{{ item.0 }}"
+  loop: "{{ openbao_nodes | product(openbao_unseal_keys[0:3]) | list }}"
+  loop_control:
+    label: "{{ item.0 }}"
+  changed_when: true
+  failed_when: false
+  no_log: true
+
+- name: Wait until the leader is unsealed
+  ansible.builtin.command:
+    cmd: bao status -format=json
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+  delegate_to: "{{ openbao_leader }}"
+  register: leader_ready
+  until: >-
+    (leader_ready.stdout | default('{}') | from_json).initialized | default(false)
+    and not ((leader_ready.stdout | default('{}') | from_json).sealed | default(true))
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: Report the login file
+  ansible.builtin.debug:
+    msg:
+      leader: "{{ openbao_leader }}"
+      bao_addr: "{{ openbao_leader_addr }}"
+      login_file: "{{ lookup('env', 'HOME') }}/.config/lumynex/openbao.env"
+      init_file: "{{ lookup('env', 'HOME') }}/.config/lumynex/openbao-init.json"

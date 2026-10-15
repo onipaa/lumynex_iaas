@@ -1,0 +1,86 @@
+# {{ ansible_managed }}
+namespace: {{ postgres_patroni_namespace }}
+scope: {{ postgres_patroni_scope }}
+name: {{ inventory_hostname }}
+
+restapi:
+  listen: 0.0.0.0:{{ postgres_patroni_rest_port }}
+  connect_address: {{ ansible_host }}:{{ postgres_patroni_rest_port }}
+
+etcd3:
+  hosts: {% for host in groups['postgres'] | sort %}{{ hostvars[host].ansible_host }}:{{ postgres_etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        logging_collector: "on"
+        max_wal_size: 10GB
+        shared_buffers: 6GB
+        effective_cache_size: 18GB
+        work_mem: 16MB
+        maintenance_work_mem: 1GB
+        wal_buffers: 64MB
+        max_connections: 200
+        max_worker_processes: 10
+        max_parallel_workers: 8
+        max_parallel_workers_per_gather: 2
+        random_page_cost: 1.1
+        effective_io_concurrency: 200
+        huge_pages: try
+        checkpoint_completion_target: 0.9
+        shared_preload_libraries: pg_stat_statements
+        pg_stat_statements.track: all
+        pg_stat_statements.max: 10000
+        track_io_timing: on
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  pg_hba:
+    - local all postgres peer
+    - local all all peer
+    - host all all 127.0.0.1/32 md5
+    - host all all ::1/128 md5
+    - host all all {{ lab_network }} md5
+    - host replication replicator 127.0.0.1/32 md5
+    - host replication replicator {{ lab_network }} md5
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ ansible_host }}:5432
+  data_dir: {{ postgres_data_dir }}
+  bin_dir: {{ postgres_bin_dir }}
+  pgpass: /var/lib/postgresql/.pgpass_patroni
+  authentication:
+    replication:
+      username: replicator
+      password: "{{ postgres_replicator_password }}"
+    superuser:
+      username: postgres
+      password: "{{ postgres_superuser_password }}"
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+  create_replica_methods:
+    - basebackup
+  basebackup:
+    checkpoint: fast
+
+watchdog:
+  mode: off
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

@@ -1,0 +1,41 @@
+---
+- name: See whether etcd already has a member directory
+  ansible.builtin.stat:
+    path: "{{ postgres_etcd_data_dir }}/member"
+  register: etcd_member
+
+- name: Keep an existing etcd member
+  ansible.builtin.set_fact:
+    postgres_etcd_initial_cluster_state: "{{ 'existing' if etcd_member.stat.exists else 'new' }}"
+
+- name: Ensure the etcd data directory exists
+  ansible.builtin.file:
+    path: "{{ postgres_etcd_data_dir }}"
+    state: directory
+    owner: etcd
+    group: etcd
+    mode: "0700"
+
+- name: Deploy etcd config
+  ansible.builtin.template:
+    src: etcd.conf.yaml.j2
+    dest: /etc/etcd/etcd.conf.yaml
+    owner: etcd
+    group: etcd
+    mode: "0640"
+  register: etcd_cfg
+
+- name: Start etcd
+  ansible.builtin.systemd:
+    name: etcd
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Restart etcd when an existing member's config changed
+  ansible.builtin.systemd:
+    name: etcd
+    state: restarted
+  when:
+    - etcd_cfg.changed
+    - postgres_etcd_initial_cluster_state == 'existing'

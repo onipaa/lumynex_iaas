@@ -1,0 +1,172 @@
+---
+# Second step for the Postgres tier. The guests must already exist.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=postgres
+#   ansible-playbook playbooks/configure_postgres.yml
+#
+# Requires ~/.config/lumynex/openbao.env.
+# Writes ~/.config/lumynex/postgresql.env.
+# Installs Percona PostgreSQL 18, Patroni, and co-located etcd.
+# A second run does not wipe a formed Patroni node or rotate passwords.
+
+- name: Prepare Postgres guests
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    tier: postgres
+    postgres_openbao_kv_prefix: secret/lumynex/postgresql
+    postgres_cluster_id: "1"
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: "{{ item.name }} needs node and template in guests.yml."
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/postgres_secrets.yml
+
+    - name: Open SSH to one guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write the Postgres environment file
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/write-postgresql-env"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+- name: Install Percona PostgreSQL, Patroni, and etcd
+  hosts: postgres
+  become: true
+  gather_facts: true
+  serial: 1
+  order: sorted
+  tasks:
+    - name: Install packages
+      ansible.builtin.include_role:
+        name: postgres_ha
+        tasks_from: packages.yml
+
+- name: Configure etcd
+  hosts: postgres
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Configure etcd
+      ansible.builtin.include_role:
+        name: postgres_ha
+        tasks_from: etcd.yml
+
+- name: Wait for etcd
+  hosts: postgres
+  become: true
+  gather_facts: false
+  tasks:
+    - name: etcdctl endpoint health
+      ansible.builtin.command:
+        cmd: etcdctl endpoint health --endpoints=http://127.0.0.1:2379
+      environment:
+        ETCDCTL_API: "3"
+      register: etcd_health
+      until: etcd_health.rc == 0
+      retries: 30
+      delay: 2
+      changed_when: false
+
+- name: Configure Patroni
+  hosts: postgres
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the postgres password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/cluster
+          - postgres_password
+      delegate_to: localhost
+      become: false
+      register: postgres_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Read the replicator password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/cluster
+          - replicator_password
+      delegate_to: localhost
+      become: false
+      register: replicator_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Publish cluster passwords
+      ansible.builtin.set_fact:
+        postgres_superuser_password: "{{ postgres_password_get.stdout }}"
+        postgres_replicator_password: "{{ replicator_password_get.stdout }}"
+      no_log: true
+
+    - name: Configure Patroni
+      ansible.builtin.include_role:
+        name: postgres_ha
+        tasks_from: patroni.yml
+
+- name: Start Patroni one node at a time
+  hosts: postgres
+  become: true
+  serial: 1
+  order: sorted
+  gather_facts: false
+  tasks:
+    - name: Start Patroni
+      ansible.builtin.systemd:
+        name: patroni
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    - name: Wait for the Patroni REST API
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/health
+        status_code: [200, 503]
+      register: patroni_health
+      until: patroni_health.status in [200, 503]
+      retries: 60
+      delay: 5
+
+- name: Show the Patroni cluster
+  hosts: "{{ (groups['postgres'] | sort)[0] }}"
+  become: true
+  gather_facts: false
+  tasks:
+    - name: patronictl list
+      ansible.builtin.command:
+        cmd: patronictl -c /etc/patroni/patroni.yml list
+      register: patronictl_list
+      changed_when: false
+
+    - name: Cluster members
+      ansible.builtin.debug:
+        var: patronictl_list.stdout_lines

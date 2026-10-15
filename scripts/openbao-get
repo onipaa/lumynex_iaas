@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Print one field from OpenBao. Scripts capture stdout. A person can read it to log in.
+#   ./scripts/openbao-get secret/lumynex/postgresql/cl1/cluster postgres_password
+#   ./scripts/openbao-get --check secret/lumynex/postgresql/cl1/cluster postgres_password
+# --check exits 0 when the field is present and prints nothing.
+set -euo pipefail
+check=0
+if [[ "${1:-}" == "--check" ]]; then
+  check=1
+  shift
+fi
+if [[ $# -ne 2 ]]; then
+  echo "usage: openbao-get [--check] <kv-path> <field>" >&2
+  exit 64
+fi
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openbao.sh"
+openbao_load
+value="$(bao kv get -field="$2" "$1")"
+if [[ -z "${value}" ]]; then
+  echo "OpenBao field $2 at $1 is empty." >&2
+  exit 1
+fi
+if [[ "${check}" -eq 0 ]]; then
+  printf '%s\n' "${value}"
+fi

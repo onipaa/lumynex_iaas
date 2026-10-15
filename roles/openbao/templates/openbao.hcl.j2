@@ -1,0 +1,29 @@
+ui = {{ openbao_ui | lower }}
+
+storage "raft" {
+  path    = "{{ openbao_data_dir }}"
+  node_id = "{{ inventory_hostname }}"
+{% for host in groups['openbao'] | sort %}
+{% if host != inventory_hostname and hostvars[host]['ansible_host'] is defined %}
+  retry_join {
+    leader_api_addr = "http://{{ hostvars[host]['ansible_host'] }}:{{ openbao_port }}"
+  }
+{% endif %}
+{% endfor %}
+}
+
+listener "tcp" {
+  address         = "{{ openbao_listener_address }}"
+  cluster_address = "{{ openbao_cluster_address }}"
+  tls_disable     = {{ 1 if (openbao_tls_disable | bool) else 0 }}
+}
+
+api_addr     = "http://{{ ansible_host }}:{{ openbao_port }}"
+cluster_addr = "http://{{ ansible_host }}:{{ openbao_cluster_port }}"
+
+audit "file" "file" {
+  description = "File audit device"
+  options {
+    file_path = "{{ openbao_audit_dir }}/audit.log"
+  }
+}

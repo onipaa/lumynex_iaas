@@ -1,0 +1,25 @@
+---
+- name: Require a tier name
+  ansible.builtin.assert:
+    that:
+      - tier is defined
+      - (tier | string | length) > 0
+    fail_msg: Pass -e tier=<name>, for example -e tier=openbao.
+
+- name: Select guests in that tier
+  ansible.builtin.set_fact:
+    tier_members: "{{ iaas_members | selectattr('tier', 'equalto', tier) | list }}"
+
+- name: Limit to one guest when member is set
+  ansible.builtin.set_fact:
+    tier_members: "{{ tier_members | selectattr('name', 'equalto', member) | list }}"
+  when: member is defined and (member | string | length) > 0
+
+- name: Require at least one guest
+  ansible.builtin.assert:
+    that:
+      - tier_members | length > 0
+    fail_msg: >-
+      No guests matched tier={{ tier }}
+      {{ ('member=' + member) if (member is defined and (member | string | length) > 0) else '' }}
+      in inventory/group_vars/guests.yml.

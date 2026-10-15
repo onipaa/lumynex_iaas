@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Log in and print exports for the current shell.
+#   eval "$(./scripts/openbao-login)"
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openbao.sh"
+openbao_load
+printf 'export BAO_ADDR=%q\n' "${BAO_ADDR}"
+printf 'export BAO_TOKEN=%q\n' "${BAO_TOKEN}"

@@ -1,0 +1,9 @@
+---
+proxmox_guest_state: present
+proxmox_storage: local-lvm
+proxmox_clone_full: true
+vm_start: true
+vm_stop_timeout: 180
+template_name: ""
+# spin_guest runs on the destination host. A tier play sets this per guest.
+proxmox_target_node: "{{ inventory_hostname }}"

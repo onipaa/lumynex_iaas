@@ -1,0 +1,62 @@
+---
+- name: Install package dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: true
+
+- name: Download the OpenBao package
+  ansible.builtin.get_url:
+    url: "{{ openbao_package_url }}"
+    dest: "/tmp/openbao_{{ openbao_version }}_{{ openbao_package_arch }}.deb"
+    mode: "0644"
+
+- name: Install OpenBao
+  ansible.builtin.apt:
+    deb: "/tmp/openbao_{{ openbao_version }}_{{ openbao_package_arch }}.deb"
+    state: present
+
+- name: Hold the OpenBao package
+  ansible.builtin.dpkg_selections:
+    name: openbao
+    selection: hold
+  when: openbao_hold_package | bool
+
+- name: Ensure OpenBao directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0750"
+  loop:
+    - "{{ openbao_config_dir }}"
+    - "{{ openbao_data_dir }}"
+    - "{{ openbao_audit_dir }}"
+
+- name: Deploy OpenBao configuration
+  ansible.builtin.template:
+    src: openbao.hcl.j2
+    dest: "{{ openbao_config_file }}"
+    owner: "{{ openbao_user }}"
+    group: "{{ openbao_group }}"
+    mode: "0640"
+  notify: Restart OpenBao
+
+- name: Enable and start OpenBao
+  ansible.builtin.systemd:
+    name: openbao
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply a config change before the health check
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the local listener
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ openbao_port }}"
+    timeout: 30

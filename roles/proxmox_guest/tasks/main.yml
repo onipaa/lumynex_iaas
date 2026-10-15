@@ -1,0 +1,21 @@
+---
+- name: Require a guest name and a state
+  ansible.builtin.assert:
+    that:
+      - vm_name is defined
+      - (vm_name | string | length) > 0
+      - proxmox_guest_state in ['present', 'absent']
+      - inventory_hostname in groups['proxmox']
+      - vm_name not in groups['proxmox']
+    fail_msg: >-
+      vm_name must be a guest, proxmox_guest_state must be present or absent,
+      and this play must run on a host in [proxmox].
+      Refusing to operate on a hypervisor ({{ groups['proxmox'] | join(', ') }}).
+
+- name: Create the guest
+  ansible.builtin.include_tasks: create.yml
+  when: proxmox_guest_state == 'present'
+
+- name: Destroy the guest
+  ansible.builtin.include_tasks: destroy.yml
+  when: proxmox_guest_state == 'absent'

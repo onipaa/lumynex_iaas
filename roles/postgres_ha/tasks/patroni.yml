@@ -1,0 +1,42 @@
+---
+- name: Ensure the Patroni config directory exists
+  ansible.builtin.file:
+    path: /etc/patroni
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0750"
+
+- name: Deploy patroni.yml
+  ansible.builtin.template:
+    src: patroni.yml.j2
+    dest: /etc/patroni/patroni.yml
+    owner: postgres
+    group: postgres
+    mode: "0600"
+  register: patroni_cfg
+  no_log: true
+
+- name: Stop and disable standalone PostgreSQL
+  ansible.builtin.systemd:
+    name: postgresql
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: See whether Patroni is already running
+  ansible.builtin.command:
+    cmd: systemctl is-active {{ postgres_patroni_service }}
+  register: patroni_active
+  changed_when: false
+  failed_when: false
+
+- name: Reload a running Patroni
+  ansible.builtin.command:
+    cmd: >-
+      patronictl -c /etc/patroni/patroni.yml reload
+      {{ postgres_patroni_scope }} {{ inventory_hostname }} --force
+  when:
+    - patroni_cfg.changed
+    - patroni_active.rc == 0
+  changed_when: true

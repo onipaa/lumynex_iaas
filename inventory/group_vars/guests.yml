@@ -1,0 +1,24 @@
+---
+# Guests from the pre-reinstall inventory. Teardown walks this list from the
+# top. Dependents go before the stores they use. Hypervisors are not listed.
+#
+# A tier play spins from the bottom of that tier (n1 first) and tears down
+# from the top. node and template are required before a tier can be built.
+# Placement matches the last live guests and the old provision scripts.
+# Odd nodes are on proxmox-1 from vanilla-26a. Even nodes are on proxmox-2
+# from vanilla-26b.
+iaas_members:
+  - { name: prhqv-cl1-app-n3, tier: app }
+  - { name: prhqv-cl1-app-n2, tier: app }
+  - { name: prhqv-cl1-app-n1, tier: app }
+  - { name: prhqv-cl1-pgdog-n2, tier: pgdog }
+  - { name: prhqv-cl1-pgdog-n1, tier: pgdog }
+  - { name: prhqv-cl1-pmm-n1, tier: pmm }
+  - { name: prhqv-cl1-postgresql-n5, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a }
+  - { name: prhqv-cl1-postgresql-n4, tier: postgres, node: prhqp-proxmox-2, template: vanilla-26b }
+  - { name: prhqv-cl1-postgresql-n3, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a }
+  - { name: prhqv-cl1-postgresql-n2, tier: postgres, node: prhqp-proxmox-2, template: vanilla-26b }
+  - { name: prhqv-cl1-postgresql-n1, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a }
+  - { name: prhqv-cl1-openbao-n3, tier: openbao, node: prhqp-proxmox-1, template: vanilla-26a }
+  - { name: prhqv-cl1-openbao-n2, tier: openbao, node: prhqp-proxmox-2, template: vanilla-26b }
+  - { name: prhqv-cl1-openbao-n1, tier: openbao, node: prhqp-proxmox-1, template: vanilla-26a }

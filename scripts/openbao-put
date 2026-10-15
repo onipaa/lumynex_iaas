@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Store fields in OpenBao. Values are arguments, never written into this file.
+#   ./scripts/openbao-put secret/lumynex/postgresql/cl1/cluster postgres_password=... replicator_password=...
+set -euo pipefail
+if [[ $# -lt 2 ]]; then
+  echo "usage: openbao-put <kv-path> key=value ..." >&2
+  exit 64
+fi
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openbao.sh"
+openbao_load
+path="$1"
+shift
+bao kv put "${path}" "$@" >/dev/null

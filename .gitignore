@@ -1,0 +1,6 @@
+inventory/hosts.ini
+inventory/host_vars/*
+!inventory/host_vars/.gitkeep
+*.retry
+.vault_pass
+vault/
