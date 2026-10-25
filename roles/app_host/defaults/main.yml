@@ -1,2 +1,2 @@
 ---
-app_openbao_kv_prefix: secret/lumynex/app
+guest_openbao_kv_prefix: secret/lumynex/app

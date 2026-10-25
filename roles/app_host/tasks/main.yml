@@ -3,7 +3,7 @@
   ansible.builtin.command:
     argv:
       - "{{ playbook_dir }}/../scripts/openbao-get"
-      - "{{ app_openbao_kv_prefix }}/{{ inventory_hostname }}"
+      - "{{ guest_openbao_kv_prefix }}/{{ inventory_hostname }}"
       - sysmaint_password
   register: openbao_sysmaint_password
   delegate_to: localhost

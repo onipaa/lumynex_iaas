@@ -65,7 +65,7 @@
   serial: 1
   order: sorted
   vars:
-    app_openbao_kv_prefix: secret/lumynex/app
+    guest_openbao_kv_prefix: secret/lumynex/app
   tasks:
     - name: Create the sysmaint account and upgrade the OS
       ansible.builtin.include_role:

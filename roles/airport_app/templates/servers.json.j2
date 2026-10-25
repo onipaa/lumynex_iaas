@@ -1,0 +1,23 @@
+{% set ns = namespace(rows=[]) %}
+{% for name in groups['openbao'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "OpenBao", "check": "openbao"}] %}
+{% endfor %}
+{% for name in groups['postgres'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "PostgreSQL", "check": "patroni"}] %}
+{% endfor %}
+{% for name in groups['pgdog'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "PgDog", "check": "pgdog"}] %}
+{% endfor %}
+{% for name in groups['app'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "Airport app", "check": "app"}] %}
+{% endfor %}
+{% for name in groups['loadbal_pgdog'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "PgDog load balancer", "check": "guest"}] %}
+{% endfor %}
+{% for name in groups['loadbal_app'] | sort %}
+{% set ns.rows = ns.rows + [{"name": name, "address": hostvars[name].ansible_host, "purpose": "Airport load balancer", "check": "guest"}] %}
+{% endfor %}
+{% set ns.rows = ns.rows + [{"name": "192.168.4.170", "address": "192.168.4.170", "purpose": "PgDog client address", "check": "pgdog"}] %}
+{% set ns.rows = ns.rows + [{"name": "192.168.4.172", "address": "192.168.4.172", "purpose": "Airport load page", "check": "airport"}] %}
+{% set ns.rows = ns.rows + [{"name": "192.168.4.171", "address": "192.168.4.171", "purpose": "SaaS address", "check": "saas"}] %}
+{{ ns.rows | to_nice_json }}

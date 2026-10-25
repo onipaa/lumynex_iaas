@@ -1,0 +1,26 @@
+---
+# HAProxy in front of the Django guests. HTTP goes to nginx on port 80.
+# The client address is stored in OpenBao on the first configure. This file
+# has no secrets.
+haproxy_pool: app
+haproxy_mode: http
+haproxy_port: 80
+haproxy_balance: roundrobin
+haproxy_timeout_client: 50s
+haproxy_timeout_server: 50s
+haproxy_virtual_router_id: 18
+haproxy_frontend_name: app_in
+haproxy_backend_name: app_nodes
+haproxy_vrrp_instance: app_vip
+haproxy_extra_vip: 192.168.4.172
+haproxy_extra_port: 8080
+haproxy_extra_check_uri: /health
+haproxy_extra_frontend_name: airport_in
+haproxy_extra_backend_name: airport_nodes
+haproxy_backend_names:
+  - prhqv-cl1-app-n1
+  - prhqv-cl1-app-n2
+  - prhqv-cl1-app-n3
+haproxy_vip_path: secret/lumynex/loadbal/cl1/app
+haproxy_secret_path: secret/lumynex/loadbal/cl1/app
+haproxy_openbao_kv_prefix: secret/lumynex/loadbal

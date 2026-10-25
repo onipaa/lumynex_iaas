@@ -1,0 +1,201 @@
+---
+- name: Require the pair
+  ansible.builtin.assert:
+    that:
+      - groups[tier] | length == 2
+      - inventory_hostname in groups[tier]
+      - ansible_host is defined
+      - (ansible_host | string | length) > 0
+      - ansible_default_ipv4.interface is defined
+    fail_msg: >-
+      {{ inventory_hostname }} needs an address and a default IPv4 interface,
+      in a {{ tier }} group of two.
+
+- name: Persist nonlocal bind
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/90-haproxy.conf
+    mode: "0644"
+    content: |
+      net.ipv4.ip_nonlocal_bind = 1
+
+- name: Apply nonlocal bind
+  ansible.builtin.command:
+    cmd: sysctl -w net.ipv4.ip_nonlocal_bind=1
+  changed_when: false
+
+- name: Install HAProxy, keepalived, and rsyslog
+  ansible.builtin.apt:
+    name:
+      - haproxy
+      - keepalived
+      - rsyslog
+    state: present
+    update_cache: true
+
+- name: Create the HAProxy log
+  ansible.builtin.file:
+    path: /var/log/haproxy.log
+    state: touch
+    owner: syslog
+    group: adm
+    mode: "0640"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Configure rsyslog for HAProxy
+  ansible.builtin.template:
+    src: rsyslog-haproxy.conf.j2
+    dest: /etc/rsyslog.d/49-haproxy.conf
+    mode: "0644"
+  register: haproxy_rsyslog
+
+- name: Restart rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    state: restarted
+  when: haproxy_rsyslog.changed
+
+- name: Configure log rotation
+  ansible.builtin.template:
+    src: logrotate-haproxy.j2
+    dest: /etc/logrotate.d/haproxy
+    mode: "0644"
+
+- name: Install the HAProxy health check
+  ansible.builtin.copy:
+    src: check_haproxy.sh
+    dest: /etc/keepalived/check_haproxy.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Read backend addresses
+  ansible.builtin.command:
+    argv:
+      - awk
+      - "/^ansible_host:/{print $2; exit}"
+      - "{{ playbook_dir }}/../inventory/host_vars/{{ item }}.yml"
+  delegate_to: localhost
+  become: false
+  register: haproxy_backend_raw
+  changed_when: false
+  loop: "{{ haproxy_backend_names }}"
+
+- name: Require each backend address
+  ansible.builtin.assert:
+    that:
+      - item.stdout | length > 0
+    fail_msg: "{{ item.item }} has no ansible_host. Configure that guest before this load balancer."
+  loop: "{{ haproxy_backend_raw.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Record backend addresses
+  ansible.builtin.set_fact:
+    haproxy_backends: "{{ haproxy_backend_raw.results | map(attribute='item') | zip(haproxy_backend_raw.results | map(attribute='stdout')) | list }}"
+
+- name: Name the peer
+  ansible.builtin.set_fact:
+    haproxy_peer_name: "{{ groups[tier] | difference([inventory_hostname]) | first }}"
+    haproxy_src_ip: "{{ ansible_host }}"
+    haproxy_priority: "{{ 150 if inventory_hostname == (groups[tier] | sort | first) else 100 }}"
+    haproxy_vrrp_interface: "{{ ansible_default_ipv4.interface }}"
+
+- name: Read the peer address
+  ansible.builtin.command:
+    argv:
+      - awk
+      - "/^ansible_host:/{print $2; exit}"
+      - "{{ playbook_dir }}/../inventory/host_vars/{{ haproxy_peer_name }}.yml"
+  delegate_to: localhost
+  become: false
+  register: haproxy_peer_raw
+  changed_when: false
+
+- name: Require the peer address
+  ansible.builtin.assert:
+    that:
+      - haproxy_peer_raw.stdout | length > 0
+    fail_msg: "{{ haproxy_peer_name }} has no ansible_host."
+
+- name: Record the peer address
+  ansible.builtin.set_fact:
+    haproxy_peer_ip: "{{ haproxy_peer_raw.stdout }}"
+
+- name: Read the client address
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-get"
+      - "{{ haproxy_vip_path }}"
+      - vip
+  delegate_to: localhost
+  become: false
+  register: haproxy_vip_raw
+  changed_when: false
+
+- name: Read the keepalived password
+  ansible.builtin.command:
+    argv:
+      - "{{ playbook_dir }}/../scripts/openbao-get"
+      - "{{ haproxy_secret_path }}"
+      - keepalived_password
+  delegate_to: localhost
+  become: false
+  register: haproxy_auth_raw
+  changed_when: false
+  no_log: true
+
+- name: Record the client address and keepalived password
+  ansible.builtin.set_fact:
+    haproxy_vip: "{{ haproxy_vip_raw.stdout }}"
+    haproxy_auth_pass: "{{ haproxy_auth_raw.stdout }}"
+  no_log: true
+
+- name: Configure HAProxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0644"
+    validate: haproxy -c -f %s
+  notify: Restart HAProxy
+
+- name: Configure keepalived
+  ansible.builtin.template:
+    src: keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart keepalived
+
+- name: Check the keepalived configuration
+  ansible.builtin.command:
+    cmd: keepalived -t -f /etc/keepalived/keepalived.conf
+  changed_when: false
+  no_log: true
+
+- name: Enable HAProxy and keepalived
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - haproxy
+    - keepalived
+
+- name: Apply configuration before the listeners start
+  ansible.builtin.meta: flush_handlers
+
+- name: Start HAProxy and keepalived
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: started
+  loop:
+    - haproxy
+    - keepalived
+
+- name: Wait for the client address
+  ansible.builtin.wait_for:
+    host: "{{ haproxy_vip }}"
+    port: "{{ haproxy_port }}"
+    timeout: 20

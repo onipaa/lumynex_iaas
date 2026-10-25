@@ -1,0 +1,15 @@
+[Unit]
+Description=PgDog PostgreSQL proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ pgdog_user }}
+Group={{ pgdog_group }}
+ExecStart=/usr/bin/pgdog --config {{ pgdog_config_dir }}/pgdog.toml --users {{ pgdog_config_dir }}/users.toml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

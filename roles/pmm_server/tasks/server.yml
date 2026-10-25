@@ -1,0 +1,62 @@
+---
+- name: Install Docker
+  ansible.builtin.apt:
+    name: docker.io
+    state: present
+    update_cache: true
+
+- name: Start Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Create the PMM data volume
+  ansible.builtin.command:
+    cmd: docker volume create pmm-data
+  register: pmm_volume
+  changed_when: "'pmm-data' in pmm_volume.stdout and pmm_volume.stderr | default('') | length > 0"
+
+- name: See whether the PMM container exists
+  ansible.builtin.command:
+    cmd: docker inspect pmm-server
+  register: pmm_inspect
+  changed_when: false
+  failed_when: false
+
+- name: Start the PMM server
+  ansible.builtin.command:
+    argv:
+      - docker
+      - run
+      - --detach
+      - --restart
+      - always
+      - --publish
+      - 443:8443
+      - --volume
+      - pmm-data:/srv
+      - --name
+      - pmm-server
+      - percona/pmm-server:3
+  when: pmm_inspect.rc != 0
+
+- name: Wait until PMM answers
+  ansible.builtin.uri:
+    url: https://127.0.0.1/v1/readyz
+    validate_certs: false
+    status_code: 200
+  register: pmm_ready
+  until: pmm_ready.status | default(0) == 200
+  retries: 60
+  delay: 10
+
+- name: Set the PMM admin password
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - pmm-server
+      - change-admin-password
+      - "{{ pmm_admin_password }}"
+  no_log: true

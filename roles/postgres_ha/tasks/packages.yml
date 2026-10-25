@@ -68,6 +68,16 @@
     name: "{{ postgres_ha_packages }}"
     state: present
 
+- name: See whether Patroni already owns this node
+  ansible.builtin.stat:
+    path: /etc/patroni/patroni.yml
+  register: patroni_config
+
+- name: See whether etcd already has a member directory
+  ansible.builtin.stat:
+    path: "{{ postgres_etcd_data_dir }}/member"
+  register: etcd_data
+
 - name: Stop the standalone database services
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -79,11 +89,9 @@
     - etcd
     - etcd-server
   failed_when: false
-
-- name: See whether Patroni already owns this node
-  ansible.builtin.stat:
-    path: /etc/patroni/patroni.yml
-  register: patroni_config
+  when:
+    - not patroni_config.stat.exists
+    - not etcd_data.stat.exists
 
 - name: Clear the data directory so Patroni can bootstrap
   ansible.builtin.file:

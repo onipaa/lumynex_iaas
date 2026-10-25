@@ -10,6 +10,7 @@
 
 - name: Open SSH to the OpenBao guests
   hosts: "{{ groups['proxmox'] | first }}"
+  any_errors_fatal: true
   gather_facts: false
   become: true
   vars:
@@ -32,6 +33,7 @@
 
 - name: Install OpenBao
   hosts: openbao
+  any_errors_fatal: true
   become: true
   gather_facts: true
   tasks:
@@ -41,6 +43,7 @@
 
 - name: Initialize OpenBao and record the login file
   hosts: "{{ groups['proxmox'] | first }}"
+  any_errors_fatal: true
   gather_facts: false
   become: true
   tasks:

@@ -19,9 +19,13 @@
     state: present
 
 - name: Hold the OpenBao package
-  ansible.builtin.dpkg_selections:
-    name: openbao
-    selection: hold
+  ansible.builtin.command:
+    cmd: apt-mark hold openbao
+  register: openbao_hold
+  changed_when: "'set on hold' in openbao_hold.stdout and 'already' not in openbao_hold.stdout"
+  until: openbao_hold.rc == 0
+  retries: 10
+  delay: 3
   when: openbao_hold_package | bool
 
 - name: Ensure OpenBao directories exist
@@ -44,6 +48,12 @@
     group: "{{ openbao_group }}"
     mode: "0640"
   notify: Restart OpenBao
+
+- name: Clear a start limit before OpenBao starts
+  ansible.builtin.command:
+    cmd: systemctl reset-failed openbao
+  changed_when: false
+  failed_when: false
 
 - name: Enable and start OpenBao
   ansible.builtin.systemd:

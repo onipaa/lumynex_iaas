@@ -1,0 +1,6 @@
+---
+- name: Restart pgdog
+  ansible.builtin.systemd:
+    name: pgdog
+    state: restarted
+    daemon_reload: true

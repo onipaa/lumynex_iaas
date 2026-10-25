@@ -1,0 +1,39 @@
+# {{ ansible_managed }}
+global_defs {
+    enable_script_security
+    script_user root
+}
+
+vrrp_script chk_haproxy {
+    script "/etc/keepalived/check_haproxy.sh"
+    interval 2
+    fall 2
+    rise 2
+    weight 0
+}
+
+vrrp_instance {{ haproxy_vrrp_instance }} {
+    state BACKUP
+    interface {{ haproxy_vrrp_interface }}
+    virtual_router_id {{ haproxy_virtual_router_id }}
+    priority {{ haproxy_priority }}
+    advert_int 1
+    nopreempt
+    authentication {
+        auth_type PASS
+        auth_pass {{ haproxy_auth_pass }}
+    }
+    unicast_src_ip {{ haproxy_src_ip }}
+    unicast_peer {
+        {{ haproxy_peer_ip }}
+    }
+    virtual_ipaddress {
+        {{ haproxy_vip }}/{{ lab_network.split('/')[1] }}
+{% if haproxy_extra_vip | default('') | length > 0 %}
+        {{ haproxy_extra_vip }}/{{ lab_network.split('/')[1] }}
+{% endif %}
+    }
+    track_script {
+        chk_haproxy
+    }
+}

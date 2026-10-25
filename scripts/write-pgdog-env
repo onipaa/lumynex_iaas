@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Write ~/.config/lumynex/pgdog.env from OpenBao and discovered host_vars.
+# Secret values are not stored in this file.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${ROOT}/lib/openbao.sh"
+openbao_load
+
+prefix="secret/lumynex/pgdog"
+host_vars="${ROOT}/../inventory/host_vars"
+dest="${HOME}/.config/lumynex/pgdog.env"
+names=(
+  prhqv-cl1-pgdog-n1
+  prhqv-cl1-pgdog-n2
+)
+
+ip_of() {
+  local file="${host_vars}/$1.yml"
+  if [[ ! -f "${file}" ]]; then
+    echo "missing ${file}" >&2
+    return 1
+  fi
+  awk '/^ansible_host:/{print $2; exit}' "${file}"
+}
+
+field() {
+  bao kv get -field="$1" "${prefix}/cl1/cluster"
+}
+
+mkdir -p "$(dirname "${dest}")"
+tmp="$(mktemp "${dest}.XXXXXX")"
+{
+  printf 'PGDOG_ADMIN_PASSWORD=%q\n' "$(field admin_password)"
+  printf 'PGDOG_LISTEN_PORT=%q\n' "$(field listen_port)"
+  printf 'PGDOG_VIP=%q\n' "$(field vip)"
+  for name in "${names[@]}"; do
+    key="SYSMAINT_$(printf '%s' "${name}" | tr '-' '_')"
+    value="$(bao kv get -field=sysmaint_password "${prefix}/${name}")"
+    printf '%s=%q\n' "${key}" "${value}"
+    printf '%s_HOST=%q\n' "${key}" "$(ip_of "${name}")"
+  done
+} >"${tmp}"
+chmod 600 "${tmp}"
+mv "${tmp}" "${dest}"

@@ -9,6 +9,7 @@ postgres_ppg_package: "percona-postgresql-{{ postgres_ppg_major }}"
 postgres_percona_release_url: "https://repo.percona.com/apt/percona-release_latest.{{ ansible_distribution_release }}_all.deb"
 postgres_ha_packages:
   - "{{ postgres_ppg_package }}"
+  - percona-pg-stat-monitor18
   - percona-patroni
   - etcd
   - etcd-server

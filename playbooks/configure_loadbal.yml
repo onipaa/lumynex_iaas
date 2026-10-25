@@ -1,0 +1,87 @@
+---
+# Install HAProxy and keepalived on one load balancer pair.
+# The guests must already exist. Backend addresses must already be in host_vars.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=loadbal_pgdog
+#   ansible-playbook playbooks/configure_loadbal.yml -e tier=loadbal_pgdog
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=loadbal_app
+#   ansible-playbook playbooks/configure_loadbal.yml -e tier=loadbal_app -e loadbal_vip=<address>
+#
+# Requires ~/.config/lumynex/openbao.env.
+# Writes ~/.config/lumynex/loadbal-pgdog.env or loadbal-app.env.
+# A second run does not rotate the keepalived password or the Django client address.
+
+- name: Prepare load balancer guests
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    postgres_openbao_kv_prefix: secret/lumynex/loadbal
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Require a load balancer tier
+      ansible.builtin.assert:
+        that:
+          - tier is defined
+          - tier in ['loadbal_app', 'loadbal_pgdog']
+        fail_msg: Pass -e tier=loadbal_pgdog or -e tier=loadbal_app.
+
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: "{{ item.name }} needs node and template in guests.yml."
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Load pool settings
+      ansible.builtin.include_vars: "../inventory/group_vars/{{ tier }}.yml"
+
+    - name: Read credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/loadbal_secrets.yml
+
+    - name: Open SSH to one guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+        guest_group: "{{ tier }}"
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write the load balancer environment file
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/write-loadbal-env"
+          - "{{ haproxy_pool }}"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+- name: Install HAProxy and keepalived
+  hosts: "{{ tier }}"
+  become: true
+  gather_facts: true
+  serial: 1
+  order: sorted
+  vars:
+    guest_openbao_kv_prefix: secret/lumynex/loadbal
+  tasks:
+    - name: Create the sysmaint account and upgrade the OS
+      ansible.builtin.include_role:
+        name: app_host
+
+    - name: Install the load balancer
+      ansible.builtin.include_role:
+        name: haproxy

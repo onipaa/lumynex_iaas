@@ -1,24 +1,34 @@
 ---
-# Guests from the pre-reinstall inventory. Teardown walks this list from the
-# top. Dependents go before the stores they use. Hypervisors are not listed.
+# Teardown walks this list from the top. Dependents go before the stores they
+# use. Hypervisors are not listed. The load balancer guests were not in the
+# pre-reinstall inventory.
 #
 # A tier play spins from the bottom of that tier (n1 first) and tears down
 # from the top. node and template are required before a tier can be built.
-# Placement matches the last live guests and the old provision scripts.
-# Odd nodes are on proxmox-1 from vanilla-26a. Even nodes are on proxmox-2
-# from vanilla-26b.
+# Node number selects the host: remainder 1 is prhqp-pve1, remainder 2 is
+# prhqp-pve2, remainder 0 is prhqp-pve3. The template is the one on that
+# node: vanilla-26a, vanilla-26b, or vanilla-26c. Pre-reinstall guests keep
+# their old sizes. The load balancer guests use the vanilla template size.
+# etcd and Patroni run on every PostgreSQL node. Seven nodes keeps etcd odd.
 iaas_members:
-  - { name: prhqv-cl1-app-n3, tier: app, node: prhqp-proxmox-1, template: vanilla-26a, cores: 6, memory_mb: 12288 }
-  - { name: prhqv-cl1-app-n2, tier: app, node: prhqp-proxmox-2, template: vanilla-26b, cores: 6, memory_mb: 12288 }
-  - { name: prhqv-cl1-app-n1, tier: app, node: prhqp-proxmox-1, template: vanilla-26a, cores: 6, memory_mb: 12288 }
-  - { name: prhqv-cl1-pgdog-n2, tier: pgdog }
-  - { name: prhqv-cl1-pgdog-n1, tier: pgdog }
-  - { name: prhqv-cl1-pmm-n1, tier: pmm }
-  - { name: prhqv-cl1-postgresql-n5, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
-  - { name: prhqv-cl1-postgresql-n4, tier: postgres, node: prhqp-proxmox-2, template: vanilla-26b, cores: 8, memory_mb: 24576 }
-  - { name: prhqv-cl1-postgresql-n3, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
-  - { name: prhqv-cl1-postgresql-n2, tier: postgres, node: prhqp-proxmox-2, template: vanilla-26b, cores: 8, memory_mb: 24576 }
-  - { name: prhqv-cl1-postgresql-n1, tier: postgres, node: prhqp-proxmox-1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
-  - { name: prhqv-cl1-openbao-n3, tier: openbao, node: prhqp-proxmox-1, template: vanilla-26a }
-  - { name: prhqv-cl1-openbao-n2, tier: openbao, node: prhqp-proxmox-2, template: vanilla-26b }
-  - { name: prhqv-cl1-openbao-n1, tier: openbao, node: prhqp-proxmox-1, template: vanilla-26a }
+  - { name: prhqv-cl1-loadbal-n2, tier: loadbal_app, node: prhqp-pve2, template: vanilla-26b }
+  - { name: prhqv-cl1-loadbal-n1, tier: loadbal_app, node: prhqp-pve1, template: vanilla-26a }
+  - { name: prhqv-cl1-loadbal-n4, tier: loadbal_pgdog, node: prhqp-pve1, template: vanilla-26a }
+  - { name: prhqv-cl1-loadbal-n3, tier: loadbal_pgdog, node: prhqp-pve3, template: vanilla-26c }
+  - { name: prhqv-cl1-app-n3, tier: app, node: prhqp-pve3, template: vanilla-26c, cores: 6, memory_mb: 12288 }
+  - { name: prhqv-cl1-app-n2, tier: app, node: prhqp-pve2, template: vanilla-26b, cores: 6, memory_mb: 12288 }
+  - { name: prhqv-cl1-app-n1, tier: app, node: prhqp-pve1, template: vanilla-26a, cores: 6, memory_mb: 12288 }
+  - { name: prhqv-cl1-pgdog-n3, tier: pgdog, node: prhqp-pve3, template: vanilla-26c, cores: 4, memory_mb: 8192 }
+  - { name: prhqv-cl1-pgdog-n2, tier: pgdog, node: prhqp-pve2, template: vanilla-26b, cores: 4, memory_mb: 8192 }
+  - { name: prhqv-cl1-pgdog-n1, tier: pgdog, node: prhqp-pve1, template: vanilla-26a, cores: 4, memory_mb: 8192 }
+  - { name: prhqv-cl1-pmm-n1, tier: pmm, node: prhqp-pve1, template: vanilla-26a, cores: 4, memory_mb: 8192 }
+  - { name: prhqv-cl1-postgresql-n7, tier: postgres, node: prhqp-pve1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n6, tier: postgres, node: prhqp-pve3, template: vanilla-26c, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n5, tier: postgres, node: prhqp-pve2, template: vanilla-26b, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n4, tier: postgres, node: prhqp-pve1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n3, tier: postgres, node: prhqp-pve3, template: vanilla-26c, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n2, tier: postgres, node: prhqp-pve2, template: vanilla-26b, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-postgresql-n1, tier: postgres, node: prhqp-pve1, template: vanilla-26a, cores: 8, memory_mb: 24576 }
+  - { name: prhqv-cl1-openbao-n3, tier: openbao, node: prhqp-pve3, template: vanilla-26c }
+  - { name: prhqv-cl1-openbao-n2, tier: openbao, node: prhqp-pve2, template: vanilla-26b }
+  - { name: prhqv-cl1-openbao-n1, tier: openbao, node: prhqp-pve1, template: vanilla-26a }

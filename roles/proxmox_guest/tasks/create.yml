@@ -65,7 +65,7 @@
           qm clone {{ matched_templates[0].vmid }} {{ next_vmid.stdout }}
           --name {{ vm_name }}
           --target {{ proxmox_target_node }}
-          --storage {{ proxmox_storage }}
+          {% if proxmox_clone_full | bool %}--storage {{ proxmox_storage }}{% endif %}
           --full {{ 1 if (proxmox_clone_full | bool) else 0 }}
       delegate_to: "{{ (matched_templates[0].node in groups['proxmox']) | ternary(matched_templates[0].node, inventory_hostname) }}"
       changed_when: true

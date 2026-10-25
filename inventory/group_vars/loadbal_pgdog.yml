@@ -1,0 +1,20 @@
+---
+# HAProxy in front of the PgDog guests. The client address is the PgDog VIP
+# already stored in OpenBao. This file has no secrets.
+haproxy_pool: pgdog
+haproxy_mode: tcp
+haproxy_port: 6432
+haproxy_balance: leastconn
+haproxy_timeout_client: 30m
+haproxy_timeout_server: 30m
+haproxy_virtual_router_id: 17
+haproxy_frontend_name: pgdog_in
+haproxy_backend_name: pgdog_nodes
+haproxy_vrrp_instance: pgdog_vip
+haproxy_backend_names:
+  - prhqv-cl1-pgdog-n1
+  - prhqv-cl1-pgdog-n2
+  - prhqv-cl1-pgdog-n3
+haproxy_vip_path: secret/lumynex/pgdog/cl1/cluster
+haproxy_secret_path: secret/lumynex/loadbal/cl1/pgdog
+haproxy_openbao_kv_prefix: secret/lumynex/loadbal

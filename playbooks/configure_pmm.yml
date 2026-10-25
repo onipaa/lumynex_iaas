@@ -1,0 +1,114 @@
+---
+# One Percona PMM server, plus the PostgreSQL settings that feed it.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=pmm
+#   ansible-playbook playbooks/configure_pmm.yml
+#
+# Requires ~/.config/lumynex/openbao.env and a formed Patroni cluster.
+# Stores secret/lumynex/pmm/cl1 (admin_password, monitor_password).
+# A second run does not rotate those passwords.
+
+- name: Prepare the PMM guest
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    tier: pmm
+    postgres_openbao_kv_prefix: secret/lumynex/pmm
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: "{{ item.name }} needs node and template in guests.yml."
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Log in to OpenBao
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/openbao-login"
+      delegate_to: localhost
+      become: false
+      register: openbao_login
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Require an OpenBao login
+      ansible.builtin.assert:
+        that:
+          - openbao_login.rc == 0
+        fail_msg: "{{ openbao_login.stderr | default('OpenBao login failed.') }}"
+
+    - name: Ensure one sysmaint password
+      ansible.builtin.include_tasks: tasks/postgres_sysmaint.yml
+      loop: "{{ tier_members }}"
+      loop_control:
+        loop_var: member
+        label: "{{ member.name }}"
+
+    - name: Store PMM passwords when they are missing
+      ansible.builtin.include_tasks: tasks/pmm_secrets.yml
+
+    - name: Open SSH to the guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+        guest_group: pmm
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+- name: Prepare the PMM guest operating system
+  hosts: pmm
+  become: true
+  gather_facts: true
+  vars:
+    guest_openbao_kv_prefix: secret/lumynex/pmm
+  tasks:
+    - name: Create the sysmaint account and upgrade the OS
+      ansible.builtin.include_role:
+        name: app_host
+
+- name: Install the PMM server
+  hosts: pmm
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the PMM passwords
+      ansible.builtin.include_tasks: tasks/pmm_secrets.yml
+
+    - name: Run the PMM server container
+      ansible.builtin.include_tasks: ../roles/pmm_server/tasks/server.yml
+
+- name: Watch PostgreSQL from PMM
+  hosts: postgres
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Read the PMM passwords
+      ansible.builtin.include_tasks: tasks/pmm_secrets.yml
+      run_once: true
+
+    - name: Give every node the PMM passwords
+      ansible.builtin.set_fact:
+        pmm_admin_password: "{{ hostvars[ansible_play_hosts_all[0]].pmm_admin_password }}"
+        pmm_monitor_password: "{{ hostvars[ansible_play_hosts_all[0]].pmm_monitor_password }}"
+      no_log: true
+
+    - name: Install pg_stat_monitor and publish its parameters
+      ansible.builtin.include_tasks: ../roles/postgres_ha/tasks/query_monitor.yml
+
+    - name: Register each PostgreSQL node
+      ansible.builtin.include_tasks: ../roles/pmm_server/tasks/register.yml

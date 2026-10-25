@@ -1,7 +1,10 @@
 ---
 proxmox_guest_state: present
+# Linked clones stay on the template pool (peter, michael, or croc).
+# local-lvm is the small boot-disk thin pool and is not a guest store.
+# A full clone sets proxmox_clone_full and then uses proxmox_storage.
 proxmox_storage: local-lvm
-proxmox_clone_full: true
+proxmox_clone_full: false
 vm_start: true
 vm_stop_timeout: 180
 template_name: ""

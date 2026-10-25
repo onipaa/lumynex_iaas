@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Airport load</title>
+  <style>
+    body { font-family: sans-serif; margin: 2rem auto; max-width: 56rem; color: #17202a; }
+    h1 { margin-bottom: 0.25rem; }
+    p { line-height: 1.4; }
+    label { display: block; margin-top: 0.8rem; }
+    input { font-size: 1rem; padding: 0.3rem; width: 8rem; }
+    button { margin-top: 1rem; font-size: 1rem; padding: 0.4rem 0.8rem; }
+    .error { color: #9b1c1c; }
+    table { border-collapse: collapse; margin-top: 1.5rem; }
+    td, th { padding: 0.25rem 0.8rem 0.25rem 0; text-align: left; }
+    .up { color: #0b6b2a; }
+    .down { color: #9b1c1c; }
+  </style>
+</head>
+<body>
+  <h1>Airport load</h1>
+  <p>This page starts simultaneous sessions against the airport database through this address. Each session searches flights most of the time and books a seat the rest of the time.</p>
+  {% if error %}
+  <p class="error">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/start">
+    {% csrf_token %}
+    <label>Sessions ({{ min_sessions }}–{{ max_sessions }})
+      <input name="sessions" type="number" min="{{ min_sessions }}" max="{{ max_sessions }}" value="20" required>
+    </label>
+    <label>Seconds ({{ min_duration_s }}–{{ max_duration_s }})
+      <input name="duration_s" type="number" min="{{ min_duration_s }}" max="{{ max_duration_s }}" value="30" required>
+    </label>
+    <button type="submit" {% if run and run.state == "running" %}disabled{% endif %}>Start</button>
+  </form>
+  <table id="results">
+    <tr><td>State</td><td id="state">{{ run.state|default:"none" }}</td></tr>
+    <tr><td>Sessions</td><td id="sessions">{{ run.sessions|default:"" }}</td></tr>
+    <tr><td>Requests</td><td id="requests">{{ run.requests|default:"" }}</td></tr>
+    <tr><td>Errors</td><td id="errors">{{ run.errors|default:"" }}</td></tr>
+    <tr><td>p50 ms</td><td id="p50">{{ run.p50_ms|default:"" }}</td></tr>
+    <tr><td>p95 ms</td><td id="p95">{{ run.p95_ms|default:"" }}</td></tr>
+  </table>
+  <h2>Servers</h2>
+  <p>Each row is one guest or client address, and whether that piece answered.</p>
+  <table id="servers">
+    <thead>
+      <tr><th>Server</th><th>Address</th><th>Purpose</th><th>Health</th></tr>
+    </thead>
+    <tbody>
+      {% for server in servers %}
+      <tr>
+        <td>{{ server.name }}</td>
+        <td>{{ server.address }}</td>
+        <td>{{ server.purpose }}</td>
+        <td class="{% if server.healthy %}up{% else %}down{% endif %}">{{ server.health }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <script>
+    async function refresh() {
+      const response = await fetch("/status");
+      const payload = await response.json();
+      const run = payload.run;
+      if (!run) return;
+      for (const key of ["state", "sessions", "requests", "errors"]) {
+        document.getElementById(key).textContent = run[key] ?? "";
+      }
+      document.getElementById("p50").textContent = run.p50_ms ?? "";
+      document.getElementById("p95").textContent = run.p95_ms ?? "";
+    }
+    function fillServers(servers) {
+      const body = document.querySelector("#servers tbody");
+      body.replaceChildren();
+      for (const server of servers) {
+        const row = document.createElement("tr");
+        for (const key of ["name", "address", "purpose"]) {
+          const cell = document.createElement("td");
+          cell.textContent = server[key] ?? "";
+          row.appendChild(cell);
+        }
+        const health = document.createElement("td");
+        health.className = server.healthy ? "up" : "down";
+        health.textContent = server.health ?? "";
+        row.appendChild(health);
+        body.appendChild(row);
+      }
+    }
+    async function refreshServers() {
+      const response = await fetch("/cluster");
+      const payload = await response.json();
+      fillServers(payload.servers || []);
+    }
+    setInterval(refresh, 2000);
+    setInterval(refreshServers, 5000);
+  </script>
+</body>
+</html>

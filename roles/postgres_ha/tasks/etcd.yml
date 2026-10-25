@@ -4,9 +4,167 @@
     path: "{{ postgres_etcd_data_dir }}/member"
   register: etcd_member
 
-- name: Keep an existing etcd member
+- name: List members when this node has not joined
+  ansible.builtin.command:
+    cmd: etcdctl member list
+  environment:
+    ETCDCTL_API: "3"
+  delegate_to: "{{ groups['etcd'] | sort | first }}"
+  register: etcd_member_list
+  changed_when: false
+  failed_when: false
+  when: not etcd_member.stat.exists
+
+- name: Add this node to a running etcd
+  ansible.builtin.command:
+    cmd: >-
+      etcdctl member add {{ inventory_hostname }}
+      --peer-urls=http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}
+  environment:
+    ETCDCTL_API: "3"
+  delegate_to: "{{ groups['etcd'] | sort | first }}"
+  register: etcd_member_add
+  changed_when: etcd_member_add.rc == 0
+  until: etcd_member_add.rc == 0
+  retries: 20
+  delay: 3
+  when:
+    - not etcd_member.stat.exists
+    - etcd_member_list.rc | default(1) == 0
+    - inventory_hostname not in (etcd_member_list.stdout | default(''))
+    - ('http://' ~ ansible_host ~ ':' ~ (postgres_etcd_peer_port | string)) not in (etcd_member_list.stdout | default(''))
+
+# member add is the last request a one-node cluster can answer. The new
+# member raises the quorum, so a follow-up member list waits forever until
+# that member starts. The add command already prints ETCD_INITIAL_CLUSTER.
+- name: Build the initial cluster from the member add
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os
+        import re
+        text = os.environ.get("ADD_OUTPUT", "")
+        match = re.search(r'ETCD_INITIAL_CLUSTER="([^"]+)"', text)
+        if not match:
+            raise SystemExit("member add did not return ETCD_INITIAL_CLUSTER")
+        print(match.group(1))
+  environment:
+    ADD_OUTPUT: "{{ etcd_member_add.stdout | default('') }}"
+  register: etcd_initial_cluster_from_add
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when: etcd_member_add is changed
+
+- name: Build the initial cluster from the member list
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os
+        text = os.environ.get("MEMBER_LIST", "")
+        me = os.environ["NODE_NAME"]
+        my_peer = os.environ["NODE_PEER"]
+        parts = []
+        for line in text.splitlines():
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) < 4 or not fields[3].startswith("http"):
+                continue
+            name = fields[2] or (me if fields[3] == my_peer else "")
+            if name:
+                parts.append(name + "=" + fields[3])
+        print(",".join(parts))
+  environment:
+    MEMBER_LIST: "{{ etcd_member_list.stdout | default('') }}"
+    NODE_NAME: "{{ inventory_hostname }}"
+    NODE_PEER: "http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}"
+  register: etcd_initial_cluster_from_list
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when:
+    - not etcd_member.stat.exists
+    - etcd_member_add is not changed
+    - etcd_member_list.rc | default(1) == 0
+
+- name: Join an etcd that is already running
   ansible.builtin.set_fact:
-    postgres_etcd_initial_cluster_state: "{{ 'existing' if etcd_member.stat.exists else 'new' }}"
+    postgres_etcd_initial_cluster_state: existing
+    postgres_etcd_initial_cluster: >-
+      {{
+        etcd_initial_cluster_from_add.stdout
+        if (etcd_member_add is changed)
+        else etcd_initial_cluster_from_list.stdout
+      }}
+  when:
+    - not etcd_member.stat.exists
+    - (etcd_member_add is changed) or (etcd_member_list.rc | default(1) == 0)
+
+# A fresh cluster starts as one voter. etcd is Type=notify, so a first node
+# that lists every peer waits for a quorum it cannot reach and systemd kills it.
+# Later nodes are member-added onto that voter.
+- name: Bootstrap etcd when no member is up yet
+  ansible.builtin.set_fact:
+    postgres_etcd_initial_cluster_state: new
+    postgres_etcd_initial_cluster: "{{ inventory_hostname }}=http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}"
+  when:
+    - not etcd_member.stat.exists
+    - etcd_member_add is not changed
+    - etcd_member_list.rc | default(1) != 0
+
+- name: Keep the stored cluster for a node that already joined
+  ansible.builtin.set_fact:
+    postgres_etcd_initial_cluster_state: existing
+  when: etcd_member.stat.exists
+
+- name: Read the live etcd members
+  ansible.builtin.command:
+    cmd: etcdctl member list
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_live_members
+  changed_when: false
+  until: etcd_live_members.rc == 0
+  retries: 15
+  delay: 2
+  when: etcd_member.stat.exists
+
+- name: Build the initial cluster from the live members
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os
+        text = os.environ.get("MEMBER_LIST", "")
+        me = os.environ["NODE_NAME"]
+        my_peer = os.environ["NODE_PEER"]
+        parts = []
+        for line in text.splitlines():
+            fields = [field.strip() for field in line.split(",")]
+            if len(fields) < 4 or not fields[3].startswith("http"):
+                continue
+            name = fields[2] or (me if fields[3] == my_peer else "")
+            if name:
+                parts.append(name + "=" + fields[3])
+        print(",".join(parts))
+  environment:
+    MEMBER_LIST: "{{ etcd_live_members.stdout | default('') }}"
+    NODE_NAME: "{{ inventory_hostname }}"
+    NODE_PEER: "http://{{ ansible_host }}:{{ postgres_etcd_peer_port }}"
+  register: etcd_live_cluster
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  when: etcd_member.stat.exists
+
+- name: Use the live members in the config
+  ansible.builtin.set_fact:
+    postgres_etcd_initial_cluster: "{{ etcd_live_cluster.stdout }}"
+  when: etcd_member.stat.exists
 
 - name: Ensure the etcd data directory exists
   ansible.builtin.file:
@@ -32,10 +190,14 @@
     enabled: true
     daemon_reload: true
 
-- name: Restart etcd when an existing member's config changed
-  ansible.builtin.systemd:
-    name: etcd
-    state: restarted
-  when:
-    - etcd_cfg.changed
-    - postgres_etcd_initial_cluster_state == 'existing'
+- name: Wait until this member answers
+  ansible.builtin.command:
+    cmd: etcdctl endpoint health --endpoints=http://127.0.0.1:2379
+  environment:
+    ETCDCTL_API: "3"
+  register: etcd_health
+  until: etcd_health.rc == 0
+  retries: 30
+  delay: 2
+  changed_when: false
+  when: postgres_etcd_initial_cluster_state in ['new', 'existing']

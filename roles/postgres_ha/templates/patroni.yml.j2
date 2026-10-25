@@ -8,7 +8,7 @@ restapi:
   connect_address: {{ ansible_host }}:{{ postgres_patroni_rest_port }}
 
 etcd3:
-  hosts: {% for host in groups['postgres'] | sort %}{{ hostvars[host].ansible_host }}:{{ postgres_etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
+  hosts: {% for host in groups['etcd'] | sort %}{{ hostvars[host].ansible_host }}:{{ postgres_etcd_client_port }}{% if not loop.last %},{% endif %}{% endfor %}
 
 bootstrap:
   dcs:
@@ -40,10 +40,22 @@ bootstrap:
         effective_io_concurrency: 200
         huge_pages: try
         checkpoint_completion_target: 0.9
-        shared_preload_libraries: pg_stat_statements
+        shared_preload_libraries: pg_stat_statements,pg_stat_monitor,auto_explain
         pg_stat_statements.track: all
         pg_stat_statements.max: 10000
+        pg_stat_monitor.pgsm_query_max_len: 2048
+        pg_stat_monitor.pgsm_normalized_query: off
+        pg_stat_monitor.pgsm_enable_query_plan: off
         track_io_timing: on
+        track_activity_query_size: 4096
+        log_min_duration_statement: 1000
+        log_parameter_max_length: -1
+        auto_explain.log_min_duration: 1000
+        auto_explain.log_analyze: on
+        auto_explain.log_buffers: on
+        auto_explain.log_verbose: on
+        auto_explain.log_nested_statements: on
+        auto_explain.log_parameter_max_length: -1
   initdb:
     - encoding: UTF8
     - data-checksums

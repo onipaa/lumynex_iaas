@@ -1,0 +1,3 @@
+---
+haproxy_timeout_connect: 5s
+haproxy_timeout_check: 5s

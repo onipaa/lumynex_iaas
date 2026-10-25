@@ -1,0 +1,9 @@
+# {{ ansible_managed }}
+{% for login in pgdog_logins %}
+[[users]]
+name = "{{ login.name }}"
+all_databases = true
+min_pool_size = 0
+password = {{ login.password | to_json }}
+
+{% endfor %}

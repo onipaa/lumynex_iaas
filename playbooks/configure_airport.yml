@@ -1,0 +1,280 @@
+---
+# Install the airport database and the Django load page.
+# The page is served at 192.168.4.172. 192.168.4.171 stays the SaaS address.
+#
+#   ansible-playbook playbooks/configure_airport.yml
+#
+# Requires OpenBao and the PostgreSQL guests. The app play also requires the
+# Django guests. lane.sh creates the database before PgDog starts, then installs
+# the page after the load balancer exists.
+#
+#   ansible-playbook playbooks/configure_airport.yml --tags airport_db
+#   ansible-playbook playbooks/configure_airport.yml --tags airport_app
+
+- name: Store the airport password
+  tags: [always]
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Store the airport secret when it is missing
+      ansible.builtin.include_tasks: tasks/airport_secrets.yml
+
+    - name: Read the airport password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/airport/cl1
+          - password
+      delegate_to: localhost
+      register: airport_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Read the airport secret key
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/airport/cl1
+          - secret_key
+      delegate_to: localhost
+      register: airport_secret_get
+      changed_when: false
+      no_log: true
+
+    - name: Publish the airport credentials
+      ansible.builtin.set_fact:
+        airport_password: "{{ airport_password_get.stdout }}"
+        airport_secret_key: "{{ airport_secret_get.stdout }}"
+      no_log: true
+
+    - name: Read the lumynex password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - lumynex_password
+      delegate_to: localhost
+      register: lumynex_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Read the harperjm password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - harperjm_password
+      delegate_to: localhost
+      register: harperjm_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Read the sysdba password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - sysdba_password
+      delegate_to: localhost
+      register: sysdba_password_get
+      changed_when: false
+      no_log: true
+
+    - name: Publish the cluster logins
+      ansible.builtin.set_fact:
+        lumynex_password: "{{ lumynex_password_get.stdout }}"
+        harperjm_password: "{{ harperjm_password_get.stdout }}"
+        sysdba_password: "{{ sysdba_password_get.stdout }}"
+      no_log: true
+
+- name: Create the airport database
+  tags: [airport_db]
+  hosts: postgres
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read Patroni status
+      ansible.builtin.uri:
+        url: http://127.0.0.1:8008/patroni
+        return_content: true
+      register: patroni_status
+
+    - name: Copy the role script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../airport/sql/001_role.sql"
+        dest: /tmp/001_role.sql
+        mode: "0644"
+      when: patroni_status.json.role in ['primary', 'master', 'leader']
+
+    - name: Copy the schema script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../airport/sql/002_schema.sql"
+        dest: /tmp/002_schema.sql
+        mode: "0644"
+      when: patroni_status.json.role in ['primary', 'master', 'leader']
+
+    - name: Create the airport role and database
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - postgres
+          - --
+          - psql
+          - -v
+          - ON_ERROR_STOP=1
+          - -v
+          - "lumynex_password={{ hostvars[groups['proxmox'] | first].lumynex_password }}"
+          - -v
+          - "harperjm_password={{ hostvars[groups['proxmox'] | first].harperjm_password }}"
+          - -v
+          - "sysdba_password={{ hostvars[groups['proxmox'] | first].sysdba_password }}"
+          - -d
+          - postgres
+          - -f
+          - /tmp/001_role.sql
+      no_log: true
+      when: patroni_status.json.role in ['primary', 'master', 'leader']
+
+    - name: Create the airport tables
+      ansible.builtin.command:
+        argv:
+          - runuser
+          - -u
+          - postgres
+          - --
+          - psql
+          - -v
+          - ON_ERROR_STOP=1
+          - -d
+          - airport
+          - -f
+          - /tmp/002_schema.sql
+      when: patroni_status.json.role in ['primary', 'master', 'leader']
+
+    - name: Remove the SQL scripts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/001_role.sql
+        - /tmp/002_schema.sql
+      when: patroni_status.json.role in ['primary', 'master', 'leader']
+
+- name: Install the airport app on the Django guests
+  tags: [airport_app]
+  hosts: app
+  gather_facts: false
+  become: true
+  vars:
+    airport_password: "{{ hostvars[groups['proxmox'] | first].airport_password }}"
+    airport_secret_key: "{{ hostvars[groups['proxmox'] | first].airport_secret_key }}"
+  tasks:
+    - name: Install Django, gunicorn, and nginx
+      ansible.builtin.apt:
+        name:
+          - python3-django
+          - python3-psycopg2
+          - python3-gunicorn
+          - gunicorn
+          - nginx
+        state: present
+        update_cache: true
+
+    - name: Create the airport directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: "0755"
+      loop:
+        - /opt/airport
+        - /etc/airport
+        - /var/log/airport
+
+    - name: Copy the airport application
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../airport/"
+        dest: /opt/airport/
+        owner: www-data
+        group: www-data
+      notify: Restart airport
+
+    - name: Write the server list
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/airport_app/templates/servers.json.j2"
+        dest: /etc/airport/servers.json
+        owner: root
+        group: www-data
+        mode: "0640"
+
+    - name: Write the airport environment
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/airport_app/templates/airport.env.j2"
+        dest: /etc/airport/airport.env
+        owner: root
+        group: www-data
+        mode: "0640"
+      no_log: true
+      notify: Restart airport
+
+    - name: Install the airport service
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/airport_app/templates/airport.service.j2"
+        dest: /etc/systemd/system/airport.service
+        mode: "0644"
+      notify: Restart airport
+
+    - name: Install the nginx site
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../roles/airport_app/templates/airport.nginx.j2"
+        dest: /etc/nginx/sites-available/airport
+        mode: "0644"
+      notify: Reload nginx
+
+    - name: Enable the nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/airport
+        dest: /etc/nginx/sites-enabled/airport
+        state: link
+      notify: Reload nginx
+
+    - name: Disable the default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
+
+    - name: Enable airport and nginx
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        daemon_reload: true
+      loop:
+        - airport
+        - nginx
+
+    - name: Apply the service files
+      ansible.builtin.meta: flush_handlers
+
+    - name: Start airport and nginx
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - airport
+        - nginx
+
+  handlers:
+    - name: Restart airport
+      ansible.builtin.systemd:
+        name: airport
+        state: restarted
+        daemon_reload: true
+
+    - name: Reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted

@@ -1,0 +1,142 @@
+---
+# Fourth step for the PgDog tier. The guests must already exist.
+#
+#   ansible-playbook playbooks/spin_tier.yml -e tier=pgdog
+#   ansible-playbook playbooks/configure_pgdog.yml
+#
+# Requires ~/.config/lumynex/openbao.env.
+# Writes ~/.config/lumynex/pgdog.env.
+# Creates the sysmaint account, installs PgDog, and points it at every
+# PostgreSQL node. The client VIP stays on the loadbal_pgdog pair.
+
+- name: Prepare PgDog guests
+  hosts: "{{ groups['proxmox'] | first }}"
+  gather_facts: false
+  become: true
+  vars:
+    tier: pgdog
+    pgdog_cluster_id: "1"
+    pgdog_openbao_kv_prefix: secret/lumynex/pgdog
+    postgres_openbao_kv_prefix: "{{ pgdog_openbao_kv_prefix }}"
+  vars_files:
+    - ../inventory/group_vars/guests.yml
+
+  tasks:
+    - name: Select the tier
+      ansible.builtin.include_tasks: tasks/select_tier.yml
+
+    - name: Require a node and a template
+      ansible.builtin.assert:
+        that:
+          - item.node is defined
+          - item.node in groups['proxmox']
+          - item.template is defined
+          - (item.template | string | length) > 0
+        fail_msg: "{{ item.name }} needs node and template in guests.yml."
+      loop: "{{ tier_members }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Read credentials from OpenBao
+      ansible.builtin.include_tasks: tasks/pgdog_secrets.yml
+
+    - name: Open SSH to one guest
+      ansible.builtin.include_role:
+        name: guest_access
+      vars:
+        vm_name: "{{ item.name }}"
+        guest_group: pgdog
+      loop: "{{ tier_members | reverse | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Write the PgDog environment file
+      ansible.builtin.command:
+        cmd: "{{ playbook_dir }}/../scripts/write-pgdog-env"
+      delegate_to: localhost
+      become: false
+      no_log: true
+
+- name: Prepare the PgDog guest operating system
+  hosts: pgdog
+  become: true
+  gather_facts: true
+  serial: 1
+  order: sorted
+  vars:
+    guest_openbao_kv_prefix: secret/lumynex/pgdog
+  tasks:
+    - name: Create the sysmaint account and upgrade the OS
+      ansible.builtin.include_role:
+        name: app_host
+
+    - name: Store the airport secret when it is missing
+      ansible.builtin.include_tasks: tasks/airport_secrets.yml
+      run_once: true
+
+    - name: Read the postgres password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/cluster
+          - postgres_password
+      delegate_to: localhost
+      become: false
+      register: postgres_password_get
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Read the lumynex password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - lumynex_password
+      delegate_to: localhost
+      become: false
+      register: lumynex_password_get
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Read the harperjm password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - harperjm_password
+      delegate_to: localhost
+      become: false
+      register: harperjm_password_get
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Read the sysdba password
+      ansible.builtin.command:
+        argv:
+          - "{{ playbook_dir }}/../scripts/openbao-get"
+          - secret/lumynex/postgresql/cl1/logins
+          - sysdba_password
+      delegate_to: localhost
+      become: false
+      register: sysdba_password_get
+      changed_when: false
+      no_log: true
+      run_once: true
+
+    - name: Install and configure PgDog
+      ansible.builtin.include_role:
+        name: pgdog
+      vars:
+        pgdog_logins:
+          - name: postgres
+            password: "{{ postgres_password_get.stdout }}"
+          - name: harperjm
+            password: "{{ harperjm_password_get.stdout }}"
+          - name: sysdba
+            password: "{{ sysdba_password_get.stdout }}"
+          - name: lumynex
+            password: "{{ lumynex_password_get.stdout }}"
+      no_log: true

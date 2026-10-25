@@ -1,0 +1,100 @@
+---
+- name: Name the Patroni leader
+  ansible.builtin.shell: |
+    set -euo pipefail
+    patronictl -c /etc/patroni/patroni.yml list -f json \
+      | python3 -c 'import json,sys; rows=json.load(sys.stdin); print(next(r["Member"] for r in rows if r["Role"]=="Leader"))'
+  args:
+    executable: /bin/bash
+  register: postgres_leader
+  changed_when: false
+  run_once: true
+
+- name: Copy the pmm role script
+  ansible.builtin.copy:
+    dest: /tmp/pmm_role.sql
+    mode: "0644"
+    content: |
+      select not exists (
+          select 1
+          from pg_roles
+          where rolname = 'pmm'
+      ) as pmm_missing \gset
+      \if :pmm_missing
+      create role pmm login password :'pmm_password';
+      \else
+      alter role pmm with login password :'pmm_password';
+      \endif
+      grant pg_monitor to pmm;
+  delegate_to: "{{ postgres_leader.stdout }}"
+  run_once: true
+
+- name: Create the pmm login and the monitoring extensions
+  ansible.builtin.shell: |
+    set -euo pipefail
+    runuser -u postgres -- psql -d postgres -v ON_ERROR_STOP=1 -v pmm_password="$PMM_MONITOR_PASSWORD" -f /tmp/pmm_role.sql
+    rm -f /tmp/pmm_role.sql
+    mapfile -t names < <(runuser -u postgres -- psql -d postgres -Atc "select datname from pg_database where datallowconn and datname <> 'template0' order by datname")
+    for name in "${names[@]}"; do
+        runuser -u postgres -- psql -d "$name" -v ON_ERROR_STOP=1 -c "create extension if not exists pg_stat_statements; create extension if not exists pg_stat_monitor;"
+    done
+  args:
+    executable: /bin/bash
+  environment:
+    PMM_MONITOR_PASSWORD: "{{ pmm_monitor_password }}"
+  delegate_to: "{{ postgres_leader.stdout }}"
+  run_once: true
+  no_log: true
+
+- name: Enable the PMM client repository
+  ansible.builtin.command:
+    cmd: percona-release enable pmm3-client
+  changed_when: false
+
+- name: Install the PMM client
+  ansible.builtin.apt:
+    name: pmm-client
+    state: present
+    update_cache: true
+
+- name: Point the client at the PMM server
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if pmm-admin status 2>/dev/null | grep -F "{{ hostvars['prhqv-cl1-pmm-n1'].ansible_host }}" >/dev/null; then
+        exit 0
+    fi
+    pmm-admin config \
+        --force \
+        --server-insecure-tls \
+        --server-url="https://admin:${PMM_ADMIN_PASSWORD}@{{ hostvars['prhqv-cl1-pmm-n1'].ansible_host }}:443"
+  args:
+    executable: /bin/bash
+  environment:
+    PMM_ADMIN_PASSWORD: "{{ pmm_admin_password | urlencode }}"
+  throttle: 1
+  register: pmm_config
+  changed_when: pmm_config.stdout is search('Registered') or pmm_config.stdout is search('registered')
+  no_log: true
+
+- name: Register this PostgreSQL node
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if pmm-admin list 2>/dev/null | grep -F '127.0.0.1:5432' >/dev/null; then
+        exit 0
+    fi
+    pmm-admin add postgresql \
+        --username=pmm \
+        --password="$PMM_MONITOR_PASSWORD" \
+        --query-source=pgstatmonitor \
+        --cluster=lumynex-cl1 \
+        --host=127.0.0.1 \
+        --port=5432 \
+        --service-name="{{ inventory_hostname }}"
+  args:
+    executable: /bin/bash
+  environment:
+    PMM_MONITOR_PASSWORD: "{{ pmm_monitor_password }}"
+  register: pmm_add
+  changed_when: pmm_add.stdout is search('Service name') or pmm_add.stdout is search('successfully')
+  throttle: 1
+  no_log: true

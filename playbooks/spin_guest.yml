@@ -3,7 +3,7 @@
 # Same role as teardown. Present is a no-op when that name already exists.
 #
 #   ansible-playbook playbooks/spin_guest.yml \
-#     -e proxmox_node=prhqp-proxmox-1 \
+#     -e proxmox_node=prhqp-pve1 \
 #     -e vm_name=prhqv-cl1-app-n1 \
 #     -e template_name=vanilla-26a
 

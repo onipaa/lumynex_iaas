@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+# Reads go to replicas. Writes go to the primary. role = "auto" follows Patroni.
+
+[general]
+host = "{{ pgdog_listen_host }}"
+port = {{ pgdog_listen_port }}
+workers = {{ pgdog_workers }}
+default_pool_size = {{ pgdog_pool_size }}
+min_pool_size = {{ pgdog_min_pool_size }}
+pooler_mode = "transaction"
+load_balancing_strategy = "least_active_connections"
+read_write_strategy = "conservative"
+read_write_split = "exclude_primary"
+lsn_check_delay = 0
+query_timeout = 30_000
+checkout_timeout = 10_000
+connect_timeout = 5_000
+openmetrics_port = {{ pgdog_openmetrics_port }}
+openmetrics_namespace = "pgdog_"
+log_level = "info"
+
+{% for database_name in pgdog_databases %}
+{% for host in groups['postgres'] | sort %}
+[[databases]]
+name = "{{ database_name }}"
+host = "{{ hostvars[host].ansible_host }}"
+port = 5432
+role = "auto"
+
+{% endfor %}
+{% endfor %}

@@ -1,0 +1,90 @@
+---
+- name: Require the cluster logins and PostgreSQL addresses
+  ansible.builtin.assert:
+    that:
+      - pgdog_logins is defined
+      - pgdog_logins | length > 0
+      - groups['postgres'] | length > 0
+      - hostvars[item].ansible_host is defined
+    fail_msg: PgDog needs the cluster logins and every PostgreSQL address.
+  loop: "{{ groups['postgres'] }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Create the pgdog group
+  ansible.builtin.group:
+    name: "{{ pgdog_group }}"
+    system: true
+
+- name: Create the pgdog user
+  ansible.builtin.user:
+    name: "{{ pgdog_user }}"
+    group: "{{ pgdog_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/pgdog
+    create_home: true
+
+- name: Create the PgDog config directory
+  ansible.builtin.file:
+    path: "{{ pgdog_config_dir }}"
+    state: directory
+    owner: "{{ pgdog_user }}"
+    group: "{{ pgdog_group }}"
+    mode: "0750"
+
+- name: Download the PgDog package
+  ansible.builtin.get_url:
+    url: "{{ pgdog_deb_url }}"
+    dest: "/tmp/pgdog_{{ pgdog_version }}-1_amd64.deb"
+    mode: "0644"
+
+- name: Install PgDog
+  ansible.builtin.apt:
+    deb: "/tmp/pgdog_{{ pgdog_version }}-1_amd64.deb"
+
+- name: Deploy pgdog.toml
+  ansible.builtin.template:
+    src: pgdog.toml.j2
+    dest: "{{ pgdog_config_dir }}/pgdog.toml"
+    owner: "{{ pgdog_user }}"
+    group: "{{ pgdog_group }}"
+    mode: "0640"
+  notify: Restart pgdog
+
+- name: Deploy users.toml
+  ansible.builtin.template:
+    src: users.toml.j2
+    dest: "{{ pgdog_config_dir }}/users.toml"
+    owner: "{{ pgdog_user }}"
+    group: "{{ pgdog_group }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart pgdog
+
+- name: Install the PgDog service
+  ansible.builtin.template:
+    src: pgdog.service.j2
+    dest: /etc/systemd/system/pgdog.service
+    mode: "0644"
+  notify: Restart pgdog
+
+- name: Enable PgDog
+  ansible.builtin.systemd:
+    name: pgdog
+    enabled: true
+    daemon_reload: true
+
+- name: Apply the PgDog configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Start PgDog
+  ansible.builtin.systemd:
+    name: pgdog
+    state: started
+
+- name: Wait until PgDog accepts connections
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ pgdog_listen_port }}"
+    timeout: 60

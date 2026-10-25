@@ -1,0 +1,104 @@
+---
+# Publish pg_stat_monitor and auto_explain on a cluster that is already formed.
+# Bootstrap parameters in patroni.yml.j2 cover a new cluster. They do not
+# update the DCS after Patroni has initialized.
+
+- name: Install pg_stat_monitor
+  ansible.builtin.apt:
+    name: percona-pg-stat-monitor18
+    state: present
+    update_cache: true
+
+- name: Read the live Patroni configuration
+  ansible.builtin.command:
+    cmd: patronictl -c /etc/patroni/patroni.yml show-config
+  register: patroni_show_config
+  changed_when: false
+  run_once: true
+
+- name: Read the running shared_preload_libraries
+  ansible.builtin.command:
+    argv:
+      - runuser
+      - -u
+      - postgres
+      - --
+      - psql
+      - -Atc
+      - show shared_preload_libraries
+  register: postgres_running_preload
+  changed_when: false
+  run_once: true
+
+- name: Decide whether monitoring parameters are already published
+  ansible.builtin.set_fact:
+    postgres_monitor_current: >-
+      {{
+        'shared_preload_libraries: pg_stat_statements,pg_stat_monitor,auto_explain' in patroni_show_config.stdout
+        and (
+          'pgsm_normalized_query: off' in patroni_show_config.stdout
+          or 'pgsm_normalized_query: false' in patroni_show_config.stdout
+        )
+        and 'log_parameter_max_length: -1' in patroni_show_config.stdout
+        and 'auto_explain.log_parameter_max_length: -1' in patroni_show_config.stdout
+        and 'pg_stat_monitor' in postgres_running_preload.stdout
+      }}
+  run_once: true
+
+- name: Publish monitoring parameters
+  ansible.builtin.command:
+    argv:
+      - patronictl
+      - -c
+      - /etc/patroni/patroni.yml
+      - edit-config
+      - --force
+      - -p
+      - shared_preload_libraries=pg_stat_statements,pg_stat_monitor,auto_explain
+      - -p
+      - pg_stat_statements.track=all
+      - -p
+      - pg_stat_statements.max=10000
+      - -p
+      - pg_stat_monitor.pgsm_query_max_len=2048
+      - -p
+      - pg_stat_monitor.pgsm_normalized_query=off
+      - -p
+      - pg_stat_monitor.pgsm_enable_query_plan=off
+      - -p
+      - track_io_timing=on
+      - -p
+      - track_activity_query_size=4096
+      - -p
+      - log_min_duration_statement=1000
+      - -p
+      - log_parameter_max_length=-1
+      - -p
+      - auto_explain.log_min_duration=1000
+      - -p
+      - auto_explain.log_analyze=on
+      - -p
+      - auto_explain.log_buffers=on
+      - -p
+      - auto_explain.log_verbose=on
+      - -p
+      - auto_explain.log_nested_statements=on
+      - -p
+      - auto_explain.log_parameter_max_length=-1
+  run_once: true
+  when: not postgres_monitor_current
+
+- name: Restart members whose parameters are pending
+  ansible.builtin.shell: |
+    set -euo pipefail
+    patronictl -c /etc/patroni/patroni.yml restart lumynex-cl1 --role replica --pending --force --timeout 180
+    patronictl -c /etc/patroni/patroni.yml restart lumynex-cl1 --role leader --pending --force --timeout 180
+    loaded="$(runuser -u postgres -- psql -Atc 'show shared_preload_libraries')"
+    case "$loaded" in
+        *pg_stat_monitor*) ;;
+        *) printf 'shared_preload_libraries is %s\n' "$loaded" >&2; exit 1 ;;
+    esac
+  args:
+    executable: /bin/bash
+  run_once: true
+  when: not postgres_monitor_current

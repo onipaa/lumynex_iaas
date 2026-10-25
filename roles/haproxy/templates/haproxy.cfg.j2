@@ -1,0 +1,63 @@
+# {{ ansible_managed }}
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    user haproxy
+    group haproxy
+    daemon
+
+defaults
+    log global
+    mode {{ haproxy_mode }}
+    option dontlognull
+    retries 2
+    timeout connect {{ haproxy_timeout_connect }}
+    timeout client {{ haproxy_timeout_client }}
+    timeout server {{ haproxy_timeout_server }}
+    timeout check {{ haproxy_timeout_check }}
+
+frontend {{ haproxy_frontend_name }}
+    bind {{ haproxy_vip }}:{{ haproxy_port }}
+    mode {{ haproxy_mode }}
+    default_backend {{ haproxy_backend_name }}
+{% if haproxy_mode == 'tcp' %}
+    option clitcpka
+{% else %}
+    option forwardfor
+{% endif %}
+
+backend {{ haproxy_backend_name }}
+    mode {{ haproxy_mode }}
+    balance {{ haproxy_balance }}
+{% if haproxy_mode == 'tcp' %}
+    option tcp-check
+    option srvtcpka
+{% else %}
+    option httpchk
+    http-check send meth GET uri / ver HTTP/1.1 hdr host {{ haproxy_vip }}
+    http-check expect status 200-399
+    option redispatch
+{% endif %}
+{% for backend_name, backend_ip in haproxy_backends %}
+    server {{ backend_name }} {{ backend_ip }}:{{ haproxy_port }} check inter 3s fall 3 rise 2
+{% endfor %}
+{% if haproxy_extra_vip | default('') | length > 0 %}
+
+frontend {{ haproxy_extra_frontend_name }}
+    bind {{ haproxy_extra_vip }}:{{ haproxy_port }}
+    mode http
+    option forwardfor
+    default_backend {{ haproxy_extra_backend_name }}
+
+backend {{ haproxy_extra_backend_name }}
+    mode http
+    balance roundrobin
+    option httpchk
+    http-check send meth GET uri {{ haproxy_extra_check_uri }} ver HTTP/1.1 hdr host {{ haproxy_extra_vip }}
+    http-check expect status 200
+    option redispatch
+{% for backend_name, backend_ip in haproxy_backends %}
+    server {{ backend_name }} {{ backend_ip }}:{{ haproxy_extra_port }} check inter 3s fall 3 rise 2
+{% endfor %}
+{% endif %}

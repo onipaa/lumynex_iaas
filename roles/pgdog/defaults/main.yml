@@ -1,0 +1,19 @@
+---
+pgdog_version: "0.1.62"
+pgdog_deb_url: "https://github.com/pgdogdev/pgdog/releases/download/v{{ pgdog_version }}/pgdog_{{ pgdog_version }}-1_amd64.deb"
+pgdog_listen_host: "0.0.0.0"
+pgdog_listen_port: 6432
+pgdog_openmetrics_port: 9090
+pgdog_pool_size: 20
+pgdog_min_pool_size: 2
+pgdog_workers: 4
+pgdog_config_dir: /etc/pgdog
+pgdog_user: pgdog
+pgdog_group: pgdog
+pgdog_database: airport
+# template0 rejects connections, so it is not routed.
+pgdog_databases:
+  - airport
+  - lumynex
+  - postgres
+  - template1

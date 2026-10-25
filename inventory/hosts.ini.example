@@ -2,11 +2,13 @@
 # taken from old_repos/lumynex ansible/inventory/hosts.ini. They are not guesses.
 #
 # [compute] node_32core_ubuntu is a separate machine, not a Proxmox guest.
-# Teardown does not touch it or the two hypervisor hosts.
+# Teardown does not touch it or the three hypervisor hosts.
+# Addresses are the post-rebuild lab from lab_addresses.md.
 
 [proxmox]
-prhqp-proxmox-1 ansible_host=192.168.4.111
-prhqp-proxmox-2 ansible_host=192.168.4.113
+prhqp-pve1 ansible_host=192.168.4.215
+prhqp-pve2 ansible_host=192.168.4.113
+prhqp-pve3 ansible_host=192.168.4.111
 
 [proxmox:vars]
 ansible_user=root
@@ -19,6 +21,8 @@ prhqv-cl1-postgresql-n2
 prhqv-cl1-postgresql-n3
 prhqv-cl1-postgresql-n4
 prhqv-cl1-postgresql-n5
+prhqv-cl1-postgresql-n6
+prhqv-cl1-postgresql-n7
 
 [postgres:vars]
 ansible_user=harperjm
@@ -38,4 +42,30 @@ prhqv-cl1-app-n2
 prhqv-cl1-app-n3
 
 [app:vars]
+ansible_user=harperjm
+
+# Guest addresses are discovered into inventory/host_vars/<name>.yml.
+[pgdog]
+prhqv-cl1-pgdog-n1
+prhqv-cl1-pgdog-n2
+prhqv-cl1-pgdog-n3
+
+[pgdog:vars]
+ansible_user=harperjm
+
+# Guest addresses are discovered into inventory/host_vars/<name>.yml.
+# loadbal_app is the pair in front of the Django guests.
+[loadbal_app]
+prhqv-cl1-loadbal-n1
+prhqv-cl1-loadbal-n2
+
+[loadbal_app:vars]
+ansible_user=harperjm
+
+# loadbal_pgdog is the pair in front of the PgDog guests.
+[loadbal_pgdog]
+prhqv-cl1-loadbal-n3
+prhqv-cl1-loadbal-n4
+
+[loadbal_pgdog:vars]
 ansible_user=harperjm

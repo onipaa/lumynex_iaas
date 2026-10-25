@@ -32,11 +32,21 @@
   changed_when: false
   failed_when: false
   delegate_to: "{{ openbao_leader }}"
+  until: (leader_status.stdout | default('') | trim) is match('^\\{')
+  retries: 30
+  delay: 2
+
+- name: Require a status document
+  ansible.builtin.assert:
+    that:
+      - (leader_status.stdout | default('') | trim) is match('^\\{')
+    fail_msg: >-
+      OpenBao on {{ openbao_leader }} did not return a status document.
+      {{ leader_status.stderr | default('') }}
 
 - name: Record whether the leader is initialized
   ansible.builtin.set_fact:
-    leader_initialized: >-
-      {{ (leader_status.stdout | default('{}') | from_json).initialized | default(false) }}
+    leader_initialized: "{{ (leader_status.stdout | from_json).initialized | default(false) }}"
 
 - name: Initialize the leader
   ansible.builtin.command:
@@ -110,6 +120,31 @@
   failed_when: false
   no_log: true
 
+- name: Unseal again after a follower joins raft
+  ansible.builtin.shell: |
+    set -euo pipefail
+    bao operator unseal "${KEY1}" >/dev/null
+    bao operator unseal "${KEY2}" >/dev/null
+    bao operator unseal "${KEY3}" >/dev/null
+    bao status -format=json
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+    KEY1: "{{ openbao_unseal_keys[0] }}"
+    KEY2: "{{ openbao_unseal_keys[1] }}"
+    KEY3: "{{ openbao_unseal_keys[2] }}"
+  delegate_to: "{{ item }}"
+  loop: "{{ openbao_nodes }}"
+  loop_control:
+    label: "{{ item }}"
+  register: node_unseal
+  until: >-
+    (node_unseal.stdout | default('') | trim) is match('^\\{')
+    and not ((node_unseal.stdout | from_json).sealed | default(true))
+  retries: 8
+  delay: 5
+  changed_when: true
+  no_log: true
+
 - name: Wait until the leader is unsealed
   ansible.builtin.command:
     cmd: bao status -format=json
@@ -118,11 +153,26 @@
   delegate_to: "{{ openbao_leader }}"
   register: leader_ready
   until: >-
-    (leader_ready.stdout | default('{}') | from_json).initialized | default(false)
-    and not ((leader_ready.stdout | default('{}') | from_json).sealed | default(true))
+    (leader_ready.stdout | default('') | trim) is match('^\\{')
+    and (leader_ready.stdout | from_json).initialized | default(false)
+    and not ((leader_ready.stdout | from_json).sealed | default(true))
   retries: 30
   delay: 2
   changed_when: false
+
+- name: Wait until all three nodes are raft voters
+  ansible.builtin.command:
+    cmd: bao operator raft list-peers
+  environment:
+    BAO_ADDR: http://127.0.0.1:8200
+    BAO_TOKEN: "{{ (lookup('file', lookup('env', 'HOME') + '/.config/lumynex/openbao-init.json') | from_json).root_token }}"
+  delegate_to: "{{ openbao_leader }}"
+  register: raft_peers
+  until: (raft_peers.stdout | regex_findall('(?m)true\\s*$') | length) == (openbao_nodes | length)
+  retries: 15
+  delay: 2
+  changed_when: false
+  no_log: true
 
 - name: Enable the kv-v2 secrets engine
   ansible.builtin.command:

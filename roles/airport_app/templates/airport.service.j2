@@ -1,0 +1,14 @@
+[Unit]
+Description=Airport load test
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/airport
+EnvironmentFile=/etc/airport/airport.env
+ExecStart=/usr/bin/gunicorn --workers 3 --threads 25 --bind 127.0.0.1:8000 --timeout 30 airport_site.wsgi:application
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
